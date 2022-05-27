@@ -32,7 +32,7 @@ def wred(str):
 
 
 filelist_train=[
-        "mls2016_8class_20cm_ascii_area1",
+        #"mls2016_8class_20cm_ascii_area1",
         "mls2016_8class_20cm_ascii_area2",
         "mls2016_8class_20cm_ascii_area3",
         # "area1",
@@ -42,8 +42,8 @@ filelist_train=[
 
 filelist_test = [
         "mls2016_8class_20cm_ascii_area1",
-        "mls2016_8class_20cm_ascii_area2",
-        "mls2016_8class_20cm_ascii_area3",
+        #"mls2016_8class_20cm_ascii_area2",
+        #"mls2016_8class_20cm_ascii_area3",
         ]
 
 print("Creating train directories...", end="", flush=True)
@@ -108,9 +108,10 @@ for filename in filelist_test:
 
         # load file and voxelize
         Sem3D.semantic3d_load_from_txt_voxel(os.path.join(args.rootdir, filename_txt),
-                                                    os.path.join(savedir, filename+"_voxels.txt"),
-                                                    args.voxel
-                                                    )
+                                            os.path.join(args.rootdir, filename_labels),
+                                            os.path.join(savedir, filename+"_voxels.txt"),
+                                            args.voxel
+                                            )
         
         # save the numpy data
         np.save(os.path.join(savedir_numpy, filename+"_voxels"), np.loadtxt(os.path.join(savedir, filename+"_voxels.txt")).astype(np.float16))

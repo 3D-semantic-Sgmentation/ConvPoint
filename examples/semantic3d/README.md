@@ -10,21 +10,36 @@ python setup.py install --home="."
 ```
 Then, run the generation script:
 ```
-python semantic3d_prepare_data.py --rootdir path_to_data_dir --savedir path_to_data_processed
+python semantic3d_prepare_data.py --rootdir /media/liangdao/DATA/origin_data/origin --savedir /media/liangdao/DATA/origin_data/convpoint
+
+python semantic3d_prepare_data.py --rootdir /media/liangdao/DATA/small/area123 --savedir /media/liangdao/DATA/small/convpoint
+
+python tummls_prepare_data.py --rootdir /media/liangdao/DATA/small/area123 --savedir /media/liangdao/DATA/small/convpoint
+
 ```
 ## Training
 
 The training script is called using:
 ```
-python semantic3d_seg.py --rootdir path_to_data_processed --savedir path_to_save_dir
+python semantic3d_seg.py --rootdir /media/liangdao/DATA/small/convpoint/train/pointcloud/ --savedir /media/liangdao/DATA/small/convpoint
+python semantic3d_seg.py --rootdir /media/liangdao/DATA/origin_data/convpoint/train/pointcloud/ --savedir /media/liangdao/DATA/origin_data/convpoint
+
+python semantic3d_seg.py --rootdir /media/liangdao/DATA/ConvPoint/data/Prepare/train/pointcloud --savedir /media/liangdao/DATA/ConvPoint/data/Prepare/
+
 ```
+
+### Transfer
+python semantic3d_seg_trans.py --rootdir /media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/train/pointcloud --savedir /media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/
+
 
 ## Test
 
 To predict on the test set (voxelized pointcloud):
 
 ```
-python semantic3d_seg.py --rootdir path_to_data_processed --savedir path_to_save_dir --test
+python semantic3d_seg.py --rootdir /media/liangdao/DATA/small/convpoint/test/pointcloud --savedir /media/liangdao/DATA/small/convpoint/SegSmall_8192_nocolorFalse_drop0.5_2022-05-25-17-40-26 --savepts --test
+
+python semantic3d_seg.py --rootdir /media/liangdao/DATA/origin_data/convpoint/test/pointcloud/ --savedir /media/liangdao/DATA/origin_data/convpoint/SegBig_8192_nocolorNone_drop0.5_2022-04-28-02-36-49 --test
 ```
 
 Finally to generate the prediction files at benchmark format (may take som time): 
@@ -32,6 +47,11 @@ Finally to generate the prediction files at benchmark format (may take som time)
 ```
 python semantic3d_benchmark_gen.py --testdir path_to_original_test_data --savedir /path_to_save_dir_benchmark --refdata path_to_data_processed --reflabel path_to_prediction_dir
 ```
+
+
+
+
+
 
 **note**: the `test_step` parameter is set `0.8`. It is possible to change it. A smaller step of sliding window would produce better segmentation at a the cost of a longer computation time.
 

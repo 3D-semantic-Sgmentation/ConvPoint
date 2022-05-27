@@ -23,6 +23,8 @@ from torchvision import transforms
 
 from sklearn.metrics import confusion_matrix
 import time
+from torch.utils.data import TensorDataset, ConcatDataset
+import logging
 
 # import convpoint.knn.lib.python.nearest_neighbors as nearest_neighbors
 
@@ -79,7 +81,8 @@ class PartDataset():
                     iteration_number = None,
                     block_size=8,
                     npoints = 8192,
-                    nocolor=True):
+                    nocolor=True,
+                    transfer=False):
 
         self.folder = folder
         self.training = training
@@ -90,6 +93,7 @@ class PartDataset():
         self.npoints = npoints
         self.iterations = iteration_number
         self.verbose = False
+        self.transfer = transfer
 
         
         self.transform = transforms.ColorJitter(
@@ -151,7 +155,12 @@ class PartDataset():
         fts = torch.from_numpy(fts).float()
         lbs = torch.from_numpy(lbs).long()
 
-        return pts, fts, lbs
+        if self.transfer==True:
+            clabel = torch.from_numpy(np.zeros(lbs.shape[0])).float()
+        if self.transfer==False:
+            clabel = torch.from_numpy(np.ones(lbs.shape[0])).float()
+
+        return pts, fts, lbs, clabel
 
     def __len__(self):
         return self.iterations
@@ -223,10 +232,24 @@ def get_model(model_name, input_channels, output_channels, args):
     if model_name == "SegBig":
         from networks.network_seg import SegBig as Net
         return Net(input_channels, output_channels, args=args)
-    else:
+    elif model_name == "SegSmall":
         from networks.network_seg import SegSmall as Net
         return Net(input_channels, output_channels)
+    elif model_name == "Disctiminiator":
+        from networks.network_seg import SegSmall_Discriminator as Net
+        return Net(input_channels, output_channels)
+        
+class TqdmLoggingHandler(logging.Handler):
+    def __init__(self, level=logging.NOTSET):
+        super().__init__(level)
 
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            tqdm.write(msg)
+            self.flush()
+        except Exception:
+            self.handleError(record)  
 
 
 def main():
@@ -235,39 +258,52 @@ def main():
     parser.add_argument("--savedir", type=str, default="./results")
     parser.add_argument('--block_size', help='Block size', type=float, default=8)
     parser.add_argument("--epochs", type=int, default=101)
-    parser.add_argument("--batch_size", "-b", type=int, default=16)
-    parser.add_argument("--iter", "-i", type=int, default=2000)
+    parser.add_argument("--batch_size", "-b", type=int, default=1)
+    parser.add_argument("--iter", "-i", type=int, default=5)
     parser.add_argument("--npoints", "-n", type=int, default=8192)
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--nocolor",default=False)
     parser.add_argument("--test", action="store_true")
     parser.add_argument("--savepts", action="store_true")
     parser.add_argument("--test_step", default=0.8, type=float)
-    parser.add_argument("--model", default="SegSmall", type=str)
+    parser.add_argument("--model", default="Disctiminiator", type=str)
     parser.add_argument("--drop", default=0.5, type=float)
     args = parser.parse_args()
 
     time_string = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
+    print(args.model)
     root_folder = os.path.join(args.savedir, "{}_{}_nocolor{}_drop{}_{}".format(
             args.model, args.npoints, args.nocolor, args.drop, time_string))
 
     filelist_train=[
-        #"area1_voxels.npy",
-        "mls2016_8class_20cm_ascii_area3_voxels.npy",
-        "mls2016_8class_20cm_ascii_area2_voxels.npy"
+        "bildstein_station1_xyz_intensity_rgb_voxels.npy",
+        "bildstein_station3_xyz_intensity_rgb_voxels.npy",
+        "domfountain_station1_xyz_intensity_rgb_voxels.npy",
+        "domfountain_station3_xyz_intensity_rgb_voxels.npy",
+        "neugasse_station1_xyz_intensity_rgb_voxels.npy",
+        "sg27_station1_intensity_rgb_voxels.npy",
+        "sg27_station2_intensity_rgb_voxels.npy",
+        "untermaederbrunnen_station1_xyz_intensity_rgb_voxels.npy",
+    ]
+    filelist_train_trans=[
+         "mls2016_8class_20cm_ascii_area2_voxels.npy",
     ]
 
     filelist_val=[
         #"area3_voxels.npy",
         "mls2016_8class_20cm_ascii_area1_voxels.npy",
+        #"mls2016_8class_20cm_ascii_area1_voxels.npy",
     ]
 
     filelist_test = [
+        "mls2016_8class_20cm_ascii_area1_voxels.npy",
         # "area2_voxels.npy",
         # "area3_voxels.npy",
         
         ]
     N_CLASSES = 8
+
+
 
     # create model
     print("Creating the network...", end="", flush=True)
@@ -279,7 +315,10 @@ def main():
         net.load_state_dict(torch.load(os.path.join(args.savedir, "state_dict.pth")))
     net.cuda()
     print("Done")
-
+    # log
+    log = logging.getLogger(__name__)
+    log.setLevel(logging.INFO)
+    log.addHandler(TqdmLoggingHandler())
 
     ##### TRAIN
     if not args.test:
@@ -289,9 +328,20 @@ def main():
 
         ds = PartDataset(filelist_train, args.rootdir,
                                 training=True, block_size=args.block_size,
+                                iteration_number=args.batch_size*args.iter,  #16000
+                                npoints=args.npoints,
+                                nocolor=args.nocolor,
+                                transfer=False)
+        print(len(ds))
+        ds_transfer = PartDataset(filelist_train_trans, args.rootdir,
+                                training=True, block_size=args.block_size,
                                 iteration_number=args.batch_size*args.iter,
                                 npoints=args.npoints,
-                                nocolor=args.nocolor)
+                                nocolor=args.nocolor,
+                                transfer=True)
+        ds = ConcatDataset([ds,ds_transfer])
+        
+        print(len(ds))
         train_loader = torch.utils.data.DataLoader(ds, batch_size=args.batch_size, shuffle=True,
                                             num_workers=args.threads)
 
@@ -299,7 +349,8 @@ def main():
                                 training=True, block_size=args.block_size,
                                 iteration_number=args.batch_size*args.iter,
                                 npoints=args.npoints,
-                                nocolor=args.nocolor)
+                                nocolor=args.nocolor,
+                                transfer=True)
         val_loader = torch.utils.data.DataLoader(val, batch_size=args.batch_size, shuffle=True,
                                             num_workers=args.threads)
         print("Done")
@@ -327,18 +378,29 @@ def main():
             cm = np.zeros((N_CLASSES, N_CLASSES))
             t = tqdm(train_loader, ncols=100, desc="Epoch {}".format(epoch))
             
-            for pts, features, seg in t:
+            for pts, features, seg, clabel in t:
+                log.info(clabel)
 
-                features = features.cuda()
-                pts = pts.cuda()
+                features = features.cuda() # n*3
+                pts = pts.cuda()  # n*3
                 seg = seg.cuda()
-                
+                clabel = clabel.cuda()
                 optimizer.zero_grad()
-                outputs = net(features, pts)
-                loss =  F.cross_entropy(outputs.view(-1, N_CLASSES), seg.view(-1))
+                outputs, class_out = net(features, pts)
+      
+                #discriminator_loss = F.binary_cross_entropy(class_out.view(-1), clabel.view(-1))
+                discriminator_loss = torch.nn.MSELoss()(class_out.view(-1),clabel.view(-1))
+                # discriminator_loss.backward()
+                seg_loss = F.cross_entropy(outputs.view(-1, N_CLASSES), seg.view(-1))
+                
+                # loss = seg_loss+discriminator_loss                
+                loss = (seg_loss+discriminator_loss)
                 loss.backward()
                 optimizer.step()
                 
+                ## class label
+                b_size = class_out.size(0)
+
                 output_np = np.argmax(outputs.cpu().detach().numpy(), axis=2).copy()
                 target_np = seg.cpu().numpy().copy()   # (16, 8192)
 
@@ -365,13 +427,13 @@ def main():
                     cm   = np.zeros((N_CLASSES, N_CLASSES))
                     t = tqdm(val_loader, ncols=100, desc="Epoch {}".format(epoch))
                     
-                    for pts, features, seg in t:
+                    for pts, features, seg,_ in t:
 
                         features = features.cuda()
                         pts = pts.cuda()
                         seg = seg.cuda()
 
-                        outputs = net(features, pts)
+                        outputs,_ = net(features, pts)
                         output_np = np.argmax(outputs.cpu().detach().numpy(), axis=2).copy()
                         target_np = seg.cpu().numpy().copy()   # (16, 8192)
 
@@ -387,7 +449,7 @@ def main():
                         if iouf>best_iou:
                             best_iou = iouf
                             # save the model
-                            print("when iou equals ",iou)
+                            print("when iou equals ",iou,"save at",os.path.join(root_folder, "state_dict.pth"))
                             torch.save(net.state_dict(), os.path.join(root_folder, "state_dict.pth"))
 
                         t.set_postfix(OA=wblue(oa), AA=wblue(aa), IOU=wblue(iou), LOSS=wblue(f"{train_loss/cm.sum():.4e}"))
@@ -400,7 +462,7 @@ def main():
     else:
         net.eval()
         for filename in filelist_test:
-            print(filename)
+            # print(filename)
             ds = PartDatasetTest(filename, args.rootdir,
                             block_size=args.block_size,
                             npoints= args.npoints,
@@ -415,14 +477,14 @@ def main():
             scores = np.zeros((xyzrgb.shape[0], N_CLASSES))
             with torch.no_grad():
                 t = tqdm(loader, ncols=100)
-                for pts, features, indices in t:
+                for pts, features, indices,_ in t:
                     
                     features = features.cuda()
                     #print(features)
                     #print(pts)
                     pts = pts.cuda()
-                    outputs = net(features, pts)
-                    print(outputs)
+                    outputs,_ = net(features, pts)
+                    # print(outputs)
                     outputs_np = outputs.cpu().numpy().reshape((-1, N_CLASSES))
                     
                     scores[indices.cpu().numpy().ravel()] += outputs_np
