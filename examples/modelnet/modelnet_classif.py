@@ -20,6 +20,9 @@ import torch.utils.data
 
 import utils.metrics as metrics
 
+from global_tags import GlobalTags
+GlobalTags.legacy_layer_base(True)
+
 def get_data(rootdir, files):
 
     train_filenames = []
@@ -109,7 +112,7 @@ def main():
     parser.add_argument("--model", type=str, default="ModelNet40")
     args = parser.parse_args()
 
-    args.cuda = not args.nocuda
+    args.cuda = True
 
     if args.cuda:
         torch.backends.cudnn.benchmark=True
