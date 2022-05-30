@@ -34,7 +34,8 @@ import gc
 
 gc.collect()
 torch.cuda.memory_summary(device=None, abbreviated=False)
-
+torch.cuda.empty_cache()
+print(torch.cuda.memory_allocated(device="cuda:0"))
 class bcolors:
     HEADER = '\033[95m'
     OKBLUE = '\033[94m'
@@ -160,12 +161,12 @@ class PartDataset():
         fts = torch.from_numpy(fts).float()
         lbs = torch.from_numpy(lbs).long()
 
-        if self.transfer==True:
-            clabel = torch.from_numpy(np.zeros(lbs.shape[0])).float()
-        if self.transfer==False:
-            clabel = torch.from_numpy(np.ones(lbs.shape[0])).float()
+        # if self.transfer==True:
+        #     clabel = torch.from_numpy(np.zeros(lbs.shape[0])).float()
+        # if self.transfer==False:
+        #     clabel = torch.from_numpy(np.ones(lbs.shape[0])).float()
 
-        return pts, fts, lbs, clabel
+        return pts, fts, lbs
 
     def __len__(self):
         return self.iterations
@@ -322,12 +323,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--rootdir', '-s', help='Path to data folder')
     parser.add_argument("--savedir", type=str, default="./results")
-    parser.add_argument('--block_size', help='Block size', type=float, default=16)
+    parser.add_argument('--block_size', help='Block size', type=float, default=4)
     parser.add_argument("--epochs", type=int, default=101)
-    parser.add_argument("--batch_size", "-b", type=int, default=16)
+    parser.add_argument("--batch_size", "-b", type=int, default=4)
     parser.add_argument("--iter", "-i", type=int, default=1200)
     parser.add_argument("--npoints", "-n", type=int, default=8192)
-    parser.add_argument("--threads", type=int, default=4)
+    parser.add_argument("--threads", type=int, default=2)
     parser.add_argument("--nocolor",default=True)
     parser.add_argument("--test", action="store_true")
     parser.add_argument("--savepts", action="store_true")
@@ -441,9 +442,7 @@ def main():
             cm = np.zeros((N_CLASSES, N_CLASSES))
             t = tqdm(zip(train_loader,train_trans_loader), ncols=100, desc="Epoch {}".format(epoch))
 
-            for (pts, features, seg, clabel),(pts_trans, features_trans, seg_trans, clabel_trans) in t:
-
-            
+            for (pts, features, seg ),(pts_trans, features_trans, seg_trans ) in t:
 
                 # ---------------------
                 #  Train Discriminator Semantic3D
@@ -451,14 +450,16 @@ def main():
                 features = features.cuda() # n*3
                 pts = pts.cuda()  # n*3
                 seg = seg.cuda()
-                clabel = clabel.cuda()
+                #clabel = clabel.cuda()
 
                 optimizer.zero_grad()
                 outputs, class_out = net(features, pts)
                 #discriminator_loss = F.cross_entropy(class_out.view(-1, 2), clabel.view(-1)) # when output linear 2 node
                 #discriminator_loss = F.binary_cross_entropy_with_logits(class_out.view(-1), clabel.view(-1))  # when output 1 node
-   
+
+                clabel = torch.from_numpy(np.ones(class_out.shape)).float().cuda()
                 discriminator_loss = torch.nn.MSELoss()(class_out.view(-1),clabel.view(-1))
+                
                 # discriminator_loss.backward()
                 seg_loss = F.cross_entropy(outputs.view(-1, N_CLASSES), seg.view(-1))
                               
@@ -471,15 +472,15 @@ def main():
                 features_trans = features_trans.cuda() # n*3
                 pts_trans = pts_trans.cuda()  # n*3
                 seg_trans = seg_trans.cuda()
-                clabel_trans = clabel_trans.cuda()
+                # clabel_trans = clabel_trans.cuda()
 
                 #optimizer.zero_grad()
                 outputs_trans, class_out_trans = net(features_trans, pts_trans)
-            
+                
+                clabel_trans = torch.from_numpy(np.ones(class_out_trans.shape)).float().cuda()
                 #discriminator_loss_trans = F.cross_entropy(class_out_trans.view(-1, 2), clabel_trans.view(-1)) # when output linear 2 node
                 #discriminator_loss_trans = F.binary_cross_entropy_with_logits(class_out_trans.view(-1), clabel_trans.view(-1))
                 discriminator_loss_trans = torch.nn.MSELoss()(class_out_trans.view(-1),clabel_trans.view(-1))
-
                 seg_loss_trans = F.cross_entropy(outputs_trans.view(-1, N_CLASSES), seg_trans.view(-1))
                 
                 # loss = seg_loss+discriminator_loss                
@@ -516,7 +517,7 @@ def main():
                     cm = np.zeros((N_CLASSES, N_CLASSES))
                     t = tqdm(val_loader, ncols=100, desc="Epoch {}".format(epoch))
                     
-                    for pts, features, seg,_ in t:
+                    for pts, features, seg in t:
 
                         features = features.cuda()
                         pts = pts.cuda()
