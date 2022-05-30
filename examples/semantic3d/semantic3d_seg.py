@@ -252,9 +252,14 @@ def main():
             args.model, args.npoints, args.nocolor, args.drop, time_string))
 
     filelist_train=[
-        #"area1_voxels.npy",
-        "mls2016_8class_20cm_ascii_area3_voxels.npy",
-        "mls2016_8class_20cm_ascii_area2_voxels.npy"
+        "bildstein_station1_xyz_intensity_rgb_voxels.npy",
+        "bildstein_station3_xyz_intensity_rgb_voxels.npy",
+        "domfountain_station1_xyz_intensity_rgb_voxels.npy",
+        "domfountain_station3_xyz_intensity_rgb_voxels.npy",
+        "neugasse_station1_xyz_intensity_rgb_voxels.npy",
+        "sg27_station1_intensity_rgb_voxels.npy",
+        "sg27_station2_intensity_rgb_voxels.npy",
+        "untermaederbrunnen_station1_xyz_intensity_rgb_voxels.npy",
     ]
 
     filelist_val=[
@@ -268,7 +273,8 @@ def main():
         
         ]
     N_CLASSES = 8
-
+    print(filelist_train)
+    print(filelist_val)
     # create model
     print("Creating the network...", end="", flush=True)
     if args.nocolor:
@@ -372,9 +378,12 @@ def main():
                         seg = seg.cuda()
 
                         outputs = net(features, pts)
+
+                        loss =  F.cross_entropy(outputs.view(-1, N_CLASSES), seg.view(-1))
+                        val_loss += loss.detach().cpu().item()
+
                         output_np = np.argmax(outputs.cpu().detach().numpy(), axis=2).copy()
                         target_np = seg.cpu().numpy().copy()   # (16, 8192)
-
                         cm_ = confusion_matrix(target_np.ravel(), output_np.ravel(), labels=list(range(N_CLASSES)))
                         cm += cm_
 
@@ -382,15 +391,17 @@ def main():
                         aa = f"{metrics.stats_accuracy_per_class(cm)[0]:.5f}"
                         iou = f"{metrics.stats_iou_per_class(cm)[0]:.5f}"
 
+                        t.set_postfix(OA=wblue(oa), AA=wblue(aa), IOU=wblue(iou), LOSS=wblue(f"{val_loss/cm.sum():.4e}"))
                         iouf = metrics.stats_iou_per_class(cm)[0]          
 
-                        if iouf>best_iou:
-                            best_iou = iouf
-                            # save the model
-                            print("when iou equals ",iou)
-                            torch.save(net.state_dict(), os.path.join(root_folder, "state_dict.pth"))
-
-                        t.set_postfix(OA=wblue(oa), AA=wblue(aa), IOU=wblue(iou), LOSS=wblue(f"{train_loss/cm.sum():.4e}"))
+                    if iouf>best_iou:
+                        best_iou = iouf
+                        # save the model
+                        print("when iou equals ",iou)
+                        torch.save(net.state_dict(), os.path.join(root_folder, "state_dict.pth"))
+                    logs.write(f"{epoch} {oa} {aa} {iou}\n")
+                    logs.flush()
+                    
 
 
 

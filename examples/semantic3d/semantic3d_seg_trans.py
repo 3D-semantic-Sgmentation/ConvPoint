@@ -29,7 +29,13 @@ import logging
 # import convpoint.knn.lib.python.nearest_neighbors as nearest_neighbors
 
 from PIL import Image
+torch.cuda.empty_cache()
+import gc
 
+gc.collect()
+torch.cuda.memory_summary(device=None, abbreviated=False)
+torch.cuda.empty_cache()
+print(torch.cuda.memory_allocated(device="cuda:0"))
 class bcolors:
     HEADER = '\033[95m'
     OKBLUE = '\033[94m'
@@ -194,7 +200,7 @@ class PartDatasetTest():
         self.pts = self.pts.astype(np.float)*step
 
     def __getitem__(self, index):
-        index = random.randint(0, len(self.pts)-1)
+        # index = random.randint(0, len(self.pts)-1)
         # get the data
         mask = self.compute_mask(self.pts[index], self.bs)
         pts = self.xyzrgb[mask]
@@ -252,17 +258,78 @@ class TqdmLoggingHandler(logging.Handler):
             self.handleError(record)  
 
 
+def validation(net, filelist_test):
+    ##### TEST
+
+    net.eval()
+
+    for filename in filelist_test:
+        # print(filename)
+        ds = PartDatasetTest(filename, args.rootdir,
+                        block_size=args.block_size,
+                        npoints= args.npoints,
+                        test_step=args.test_step,
+                        nocolor=args.nocolor
+                        )
+        loader = torch.utils.data.DataLoader(ds, batch_size=args.batch_size, shuffle=False,
+                                        num_workers=args.threads
+                                        )
+
+        xyzrgb = ds.xyzrgb[:,:3]
+        scores = np.zeros((xyzrgb.shape[0], N_CLASSES))
+        with torch.no_grad():
+            t = tqdm(loader, ncols=100)
+            for pts, features, indices,_ in t:
+                
+                features = features.cuda()
+                #print(features)
+                #print(pts)
+                pts = pts.cuda()
+                outputs,_ = net(features, pts)
+                # print(outputs)
+                outputs_np = outputs.cpu().numpy().reshape((-1, N_CLASSES))
+                
+                scores[indices.cpu().numpy().ravel()] += outputs_np
+                #print(scores[indices[0][0]])
+        
+        mask = np.logical_not(scores.sum(1)==0)
+        #print(mask)
+        scores = scores[mask]
+        
+        pts_src = xyzrgb[mask]
+
+        # create the scores for all points
+        scores = nearest_correspondance(pts_src.astype(np.float32), xyzrgb.astype(np.float32), scores, K=1)
+
+        # compute softmax
+        scores = scores - scores.max(axis=1)[:,None]
+        scores = np.exp(scores) / np.exp(scores).sum(1)[:,None]
+        scores = np.nan_to_num(scores)
+
+        os.makedirs(os.path.join(args.savedir, "results"), exist_ok=True)
+
+        # saving labels
+        save_fname = os.path.join(args.savedir, "results", filename.replace(".npy",".labels"))
+        scores = scores.argmax(1)
+        np.savetxt(save_fname,scores,fmt='%d')
+
+        if args.savepts:
+            save_fname = os.path.join(args.savedir, "results", f"{filename}_pts.txt")
+            xyzrgb = np.concatenate([xyzrgb, np.expand_dims(scores,1)], axis=1)
+            np.savetxt(save_fname,xyzrgb,fmt=['%.4f','%.4f','%.4f','%d'])
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--rootdir', '-s', help='Path to data folder')
     parser.add_argument("--savedir", type=str, default="./results")
     parser.add_argument('--block_size', help='Block size', type=float, default=8)
     parser.add_argument("--epochs", type=int, default=101)
-    parser.add_argument("--batch_size", "-b", type=int, default=1)
-    parser.add_argument("--iter", "-i", type=int, default=5)
+    parser.add_argument("--batch_size", "-b", type=int, default=8)
+    parser.add_argument("--iter", "-i", type=int, default=1200)
     parser.add_argument("--npoints", "-n", type=int, default=8192)
     parser.add_argument("--threads", type=int, default=4)
-    parser.add_argument("--nocolor",default=False)
+    parser.add_argument("--nocolor",default=True)
     parser.add_argument("--test", action="store_true")
     parser.add_argument("--savepts", action="store_true")
     parser.add_argument("--test_step", default=0.8, type=float)
@@ -271,11 +338,15 @@ def main():
     args = parser.parse_args()
 
     time_string = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
-    print(args.model)
+    
     root_folder = os.path.join(args.savedir, "{}_{}_nocolor{}_drop{}_{}".format(
             args.model, args.npoints, args.nocolor, args.drop, time_string))
 
     filelist_train=[
+        "mls2016_8class_20cm_ascii_area2_voxels.npy",
+
+    ]
+    filelist_train_trans=[
         "bildstein_station1_xyz_intensity_rgb_voxels.npy",
         "bildstein_station3_xyz_intensity_rgb_voxels.npy",
         "domfountain_station1_xyz_intensity_rgb_voxels.npy",
@@ -285,26 +356,19 @@ def main():
         "sg27_station2_intensity_rgb_voxels.npy",
         "untermaederbrunnen_station1_xyz_intensity_rgb_voxels.npy",
     ]
-    filelist_train_trans=[
-         "mls2016_8class_20cm_ascii_area2_voxels.npy",
-    ]
+    
 
     filelist_val=[
         #"area3_voxels.npy",
         "mls2016_8class_20cm_ascii_area1_voxels.npy",
         #"mls2016_8class_20cm_ascii_area1_voxels.npy",
     ]
+    print(filelist_train,filelist_train_trans)
+    print(filelist_val)
 
-    filelist_test = [
-        "mls2016_8class_20cm_ascii_area1_voxels.npy",
-        # "area2_voxels.npy",
-        # "area3_voxels.npy",
-        
-        ]
-    N_CLASSES = 8
+    N_CLASSES= 8
 
-
-
+    print(args.model)
     # create model
     print("Creating the network...", end="", flush=True)
     if args.nocolor:
@@ -315,6 +379,8 @@ def main():
         net.load_state_dict(torch.load(os.path.join(args.savedir, "state_dict.pth")))
     net.cuda()
     print("Done")
+    print("discriminator output 1 class(Linear)")
+    print("discriminator at layer 6 features")
     # log
     log = logging.getLogger(__name__)
     log.setLevel(logging.INFO)
@@ -322,8 +388,6 @@ def main():
 
     ##### TRAIN
     if not args.test:
-
-
         print("Create the datasets...", end="", flush=True)
 
         ds = PartDataset(filelist_train, args.rootdir,
@@ -332,19 +396,19 @@ def main():
                                 npoints=args.npoints,
                                 nocolor=args.nocolor,
                                 transfer=False)
-        print(len(ds))
+
         ds_transfer = PartDataset(filelist_train_trans, args.rootdir,
                                 training=True, block_size=args.block_size,
                                 iteration_number=args.batch_size*args.iter,
                                 npoints=args.npoints,
                                 nocolor=args.nocolor,
                                 transfer=True)
-        ds = ConcatDataset([ds,ds_transfer])
         
-        print(len(ds))
         train_loader = torch.utils.data.DataLoader(ds, batch_size=args.batch_size, shuffle=True,
                                             num_workers=args.threads)
 
+        train_trans_loader = torch.utils.data.DataLoader(ds_transfer, batch_size=args.batch_size, shuffle=True,
+                                            num_workers=args.threads)
         val = PartDataset(filelist_val, args.rootdir,
                                 training=True, block_size=args.block_size,
                                 iteration_number=args.batch_size*args.iter,
@@ -354,7 +418,6 @@ def main():
         val_loader = torch.utils.data.DataLoader(val, batch_size=args.batch_size, shuffle=True,
                                             num_workers=args.threads)
         print("Done")
-
 
         print("Create optimizer...", end="", flush=True)
         optimizer = torch.optim.Adam(net.parameters(), lr=1e-3)
@@ -375,27 +438,56 @@ def main():
             net.train()
 
             train_loss = 0
+            #trans_loss = 0
             cm = np.zeros((N_CLASSES, N_CLASSES))
-            t = tqdm(train_loader, ncols=100, desc="Epoch {}".format(epoch))
-            
-            for pts, features, seg, clabel in t:
-                log.info(clabel)
+            t = tqdm(zip(train_loader,train_trans_loader), ncols=100, desc="Epoch {}".format(epoch))
 
+            for (pts, features, seg, _),(pts_trans, features_trans, seg_trans, _) in t:
+
+            
+
+                # ---------------------
+                #  Train Discriminator Semantic3D
+                # --------------------
                 features = features.cuda() # n*3
                 pts = pts.cuda()  # n*3
                 seg = seg.cuda()
-                clabel = clabel.cuda()
+                #clabel = clabel.cuda()
+
                 optimizer.zero_grad()
                 outputs, class_out = net(features, pts)
-      
-                #discriminator_loss = F.binary_cross_entropy(class_out.view(-1), clabel.view(-1))
+                #discriminator_loss = F.cross_entropy(class_out.view(-1, 2), clabel.view(-1)) # when output linear 2 node
+                #discriminator_loss = F.binary_cross_entropy_with_logits(class_out.view(-1), clabel.view(-1))  # when output 1 node
+
+                clabel = torch.from_numpy(np.ones(class_out.shape)).float().cuda()
                 discriminator_loss = torch.nn.MSELoss()(class_out.view(-1),clabel.view(-1))
                 # discriminator_loss.backward()
                 seg_loss = F.cross_entropy(outputs.view(-1, N_CLASSES), seg.view(-1))
+                              
+                # loss = (seg_loss+discriminator_loss)
+                #loss.backward()
+                #optimizer.step()
+                # ---------------------
+                #  Train Discriminator TUMMLS
+                # ---------------------
+                features_trans = features_trans.cuda() # n*3
+                pts_trans = pts_trans.cuda()  # n*3
+                seg_trans = seg_trans.cuda()
+                # clabel_trans = clabel_trans.cuda()
+
+                #optimizer.zero_grad()
+                outputs_trans, class_out_trans = net(features_trans, pts_trans)
+                
+                clabel_trans = torch.from_numpy(np.ones(class_out_trans.shape)).float().cuda()
+                #discriminator_loss_trans = F.cross_entropy(class_out_trans.view(-1, 2), clabel_trans.view(-1)) # when output linear 2 node
+                #discriminator_loss_trans = F.binary_cross_entropy_with_logits(class_out_trans.view(-1), clabel_trans.view(-1))
+                discriminator_loss_trans = torch.nn.MSELoss()(class_out_trans.view(-1),clabel_trans.view(-1))
+
+                seg_loss_trans = F.cross_entropy(outputs_trans.view(-1, N_CLASSES), seg_trans.view(-1))
                 
                 # loss = seg_loss+discriminator_loss                
-                loss = (seg_loss+discriminator_loss)
-                loss.backward()
+                loss_sum = (seg_loss_trans+discriminator_loss_trans)+(seg_loss+discriminator_loss)
+                loss_sum.backward()
                 optimizer.step()
                 
                 ## class label
@@ -411,20 +503,20 @@ def main():
                 aa = f"{metrics.stats_accuracy_per_class(cm)[0]:.5f}"
                 iou = f"{metrics.stats_iou_per_class(cm)[0]:.5f}"
 
-                train_loss += loss.detach().cpu().item()
-
-                t.set_postfix(OA=wblue(oa), AA=wblue(aa), IOU=wblue(iou), LOSS=wblue(f"{train_loss/cm.sum():.4e}"))
-
-
+                train_loss += loss_sum.detach().cpu().item()
+                #trans_loss += loss_t.detach().cpu().item()
+                
+                t.set_postfix(OA=wblue(oa), AA=wblue(aa), IOU=wblue(iou), Train_LOSS=wblue(f"{train_loss/cm.sum():.4e}"))
 
             # write the logs
             logs.write(f"{epoch} {oa} {aa} {iou}\n")
             logs.flush()
 
             if epoch%5==0:
+                net.eval()
                 with torch.no_grad(): 
-                    net.eval()
-                    cm   = np.zeros((N_CLASSES, N_CLASSES))
+                    val_loss =0
+                    cm = np.zeros((N_CLASSES, N_CLASSES))
                     t = tqdm(val_loader, ncols=100, desc="Epoch {}".format(epoch))
                     
                     for pts, features, seg,_ in t:
@@ -446,14 +538,20 @@ def main():
 
                         iouf = metrics.stats_iou_per_class(cm)[0]          
 
-                        if iouf>best_iou:
-                            best_iou = iouf
-                            # save the model
-                            print("when iou equals ",iou,"save at",os.path.join(root_folder, "state_dict.pth"))
-                            torch.save(net.state_dict(), os.path.join(root_folder, "state_dict.pth"))
+                        loss =  F.cross_entropy(outputs.view(-1, N_CLASSES), seg.view(-1))
+                        val_loss += loss.detach().cpu().item()
 
-                        t.set_postfix(OA=wblue(oa), AA=wblue(aa), IOU=wblue(iou), LOSS=wblue(f"{train_loss/cm.sum():.4e}"))
+                        t.set_postfix(OA=wblue(oa), AA=wblue(aa), IOU=wblue(iou), LOSS=wblue(f"{val_loss/cm.sum():.4e}"))
 
+                    if iouf>best_iou:
+                        best_iou = iouf
+                        # save the model
+                        print("when iou equals ",iou,"save at",os.path.join(root_folder, "state_dict.pth"))
+                        torch.save(net.state_dict(), os.path.join(root_folder, "state_dict.pth"))
+
+                        
+                    logs.write(f"{epoch} {oa} {aa} {iou} {val_loss}\n")
+                    logs.flush()
 
 
         logs.close()

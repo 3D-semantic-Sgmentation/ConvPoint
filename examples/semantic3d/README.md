@@ -27,10 +27,15 @@ python semantic3d_seg.py --rootdir /media/liangdao/DATA/origin_data/convpoint/tr
 python semantic3d_seg.py --rootdir /media/liangdao/DATA/ConvPoint/data/Prepare/train/pointcloud --savedir /media/liangdao/DATA/ConvPoint/data/Prepare/
 
 ```
+Sematnic3D training, area1 test
+```
+python semantic3d_seg.py --rootdir /media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/train/pointcloud --savedir /media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/
+```
 
 ### Transfer
+```
 python semantic3d_seg_trans.py --rootdir /media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/train/pointcloud --savedir /media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/
-
+```
 
 ## Test
 
