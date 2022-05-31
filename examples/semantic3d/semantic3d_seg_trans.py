@@ -483,7 +483,7 @@ def main():
                 seg_loss_trans = F.cross_entropy(outputs_trans.view(-1, N_CLASSES), seg_trans.view(-1))
                 
                 # loss = seg_loss+discriminator_loss                
-                loss_sum = (seg_loss_trans+discriminator_loss_trans)+(seg_loss+discriminator_loss)
+                loss_sum = seg_loss_trans+(seg_loss+discriminator_loss)
                 loss_sum.backward()
                 optimizer.step()
                 

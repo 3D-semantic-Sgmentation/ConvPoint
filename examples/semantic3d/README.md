@@ -14,7 +14,7 @@ python semantic3d_prepare_data.py --rootdir /media/liangdao/DATA/origin_data/ori
 
 python semantic3d_prepare_data.py --rootdir /media/liangdao/DATA/small/area123 --savedir /media/liangdao/DATA/small/convpoint
 
-python tummls_prepare_data.py --rootdir /media/liangdao/DATA/small/area123 --savedir /media/liangdao/DATA/small/convpoint
+python tummls_prepare_data.py --rootdir /media/liangdao/DATA/small/subarea --savedir /media/liangdao/DATA/small/subarea
 
 ```
 ## Training
