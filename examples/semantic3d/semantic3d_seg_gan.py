@@ -427,9 +427,9 @@ def main():
         print("Done")
 
         print("Create optimizer...", end="", flush=True)        
-        optimizer = torch.optim.Adam(itertools.chain(FGNet.parameters(), dis1.parameters(), dis2.parameters()), lr=args.lr)  # Discriminator use large learning rate
-    
-        scheduler = lr_scheduler.StepLR(optimizer, 80, gamma=0.1, last_epoch=-1)
+        optimizer_dis = torch.optim.Adam(itertools.chain(dis1.parameters(), dis2.parameters()), lr=args.lr)  # Discriminator use large learning rate
+        optimizer_FGNet = torch.optim.Adam(FGNet.parameters(), lr=args.lr)  # Discriminator use large learning rate
+        scheduler = lr_scheduler.StepLR(optimizer_dis, 80, gamma=0.1, last_epoch=-1)
 
         print("Done")
         
@@ -446,7 +446,7 @@ def main():
         logs.write(str(filelist_val))
         logs.write(str(args))
         logs.flush()
-        logs.write(str(optimizer))
+        logs.write(str(optimizer_FGNet))
 
         logs.flush()
 
@@ -476,38 +476,63 @@ def main():
                 seg_trans = seg_trans.cuda()
                 # clabel_trans = clabel_trans.cuda()
 
-
-                optimizer.zero_grad()
+                optimizer_dis.zero_grad()
 
                 point_features_trans = FGNet(features_trans, pts_trans)
                 outputs_trans = dis1(features_trans, point_features_trans)
-                class_out_trans = dis2(features_trans, point_features_trans)
 
+                class_out_trans = dis2(features_trans, point_features_trans)
                 clabel_false = torch.zeros(class_out_trans.size(0)).cuda()
 
                 seg_loss_trans = F.cross_entropy(outputs_trans.view(-1, N_CLASSES), seg_trans.view(-1))
                 domain_loss_trans = torch.nn.NLLLoss()(class_out_trans.flatten(), clabel_false.long())
-
-                
-                # ---------------------
-                #  Train GAN TUMMLS
-                # --------------------
 
                 features = features.cuda() # n*3
                 pts = pts.cuda()  # n*3
                 seg = seg.cuda()
 
                 point_features = FGNet(features, pts)
-                outputs = dis1(features, point_features)
+                # outputs = dis1(features, point_features)
+
                 class_out = dis2(features, point_features)
                 clabel_true = torch.ones(class_out.size(0)).cuda()
                 
                 domain_loss = torch.nn.NLLLoss()(class_out.flatten(), clabel_true.long())
-   
-                
-                loss_gan = seg_loss_trans+domain_loss_trans+domain_loss
-                loss_gan.backward()
-                optimizer.step()
+
+                loss_dis = seg_loss_trans+domain_loss_trans+domain_loss 
+
+                loss_dis.backward()
+                optimizer_dis.step()
+                # ---------------------
+                #  Train Feature Generator TUMMLS
+                # --------------------
+
+                optimizer_FGNet.zero_grad()
+
+                point_features_trans = FGNet(features_trans, pts_trans)
+                outputs_trans = dis1(features_trans, point_features_trans)
+
+                # class_out_trans = dis2(features_trans, point_features_trans)
+
+                # clabel_true = torch.ones(class_out_trans.size(0)).cuda()
+
+                seg_loss_trans = F.cross_entropy(outputs_trans.view(-1, N_CLASSES), seg_trans.view(-1))
+                # domain_loss_trans = torch.nn.NLLLoss()(class_out_trans.flatten(), clabel_true.long())
+
+                features = features.cuda() # n*3
+                pts = pts.cuda()  # n*3
+                seg = seg.cuda()
+
+                point_features = FGNet(features, pts)
+                # outputs = dis1(features, point_features)
+                class_out = dis2(features, point_features)
+                clabel_false = torch.zeros(class_out.size(0)).cuda()
+                domain_loss = torch.nn.NLLLoss()(class_out.flatten(), clabel_false.long())
+
+
+                loss_FGNet = seg_loss_trans+domain_loss
+                loss_FGNet.backward()
+                optimizer_FGNet.step()
                 
                 # ---------------------
                 #  Loss and Evaluation

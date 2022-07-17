@@ -487,8 +487,8 @@ def main():
                 optimizer_dis.zero_grad()
 
                 point_features_trans = FGNet(features_trans, pts_trans)
-                outputs_trans_1, class_out_trans_1 =dis1(features_trans, point_features_trans)
-                outputs_trans_2, class_out_trans_2 = dis2(features_trans, point_features_trans)
+                outputs_trans_1, _ =dis1(features_trans, point_features_trans)
+                outputs_trans_2, _ = dis2(features_trans, point_features_trans)
 
 
                 seg_loss_trans_1 = F.cross_entropy(outputs_trans_1.view(-1, N_CLASSES), seg_trans.view(-1))
@@ -505,21 +505,23 @@ def main():
                 #  Train GAN TUMMLS
                 # --------------------
 
-
                 optimizer_FGNet.zero_grad()
 
                 point_features = FGNet(features, pts)
-                outputs_1, class_out_1 = dis1(features, point_features)
-                outputs_2, class_out_2 = dis2(features, point_features)
+                outputs_1, _ = dis1(features, point_features)
+                outputs_2, _ = dis2(features, point_features)
+                
+                point_features_trans = FGNet(features_trans, pts_trans)
+                outputs_trans_1, _ =dis1(features_trans, point_features_trans)
+                outputs_trans_2, _ = dis2(features_trans, point_features_trans)
 
-
-                seg_loss_1 = F.cross_entropy(outputs_1.view(-1, N_CLASSES), seg.view(-1))
-                seg_loss_2 = F.cross_entropy(outputs_2.view(-1, N_CLASSES), seg.view(-1))
+                seg_loss_1 = F.cross_entropy(outputs_trans_1.view(-1, N_CLASSES), seg_trans.view(-1))
+                seg_loss_2 = F.cross_entropy(outputs_trans_2.view(-1, N_CLASSES), seg_trans.view(-1))
 
                 
                 adv_loss = F.l1_loss(outputs_1, outputs_2)
 
-                loss_gan = seg_loss_1 + seg_loss_2 + 0.001*adv_loss
+                loss_gan = seg_loss_1 + seg_loss_2 + 0.1*adv_loss
                 loss_gan.backward()
                 optimizer_FGNet.step()
 
