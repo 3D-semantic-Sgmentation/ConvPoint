@@ -20,19 +20,21 @@ def read_ply_with_parameters(path):
     for i, name in enumerate(property_names):
         print(name) # print parameters
         data_np[:, i] = data_pd[name]
-    return data_np[:,0:3],np.int64(data_np[:,3])
+    values, counts = np.unique(data_np[:,-1], return_counts=True)
+    print(values,counts)
 
+    return data_np[:,0:3],np.int64(data_np[:,-1])
 
 
 if __name__ == "__main__":
     #path = "../Toronto_3D/*.ply"
     #path = "../Toronto_3D/L001.ply"
-    path = "/media/liangdao/DATA/small/subarea/mls2016_8class_20cm_ascii_area2_1.ply"
+    path = "/media/liangdao/DATA/small/subarea/mls2016_8class_20cm_ascii_area1_1_1.ply" # 1076,1847,1191
     train_point, train_labels = read_ply_with_parameters(path)
-    point_path = path.replace(".ply",".txt")
-    label_path = path.replace(".ply",".labels")
-    np.savetxt(point_path, train_point,fmt='%1.6f')   # X is an array
+    #point_path = path.replace(".ply",".txt")
+    #label_path = path.replace(".ply",".labels")
+    #np.savetxt(point_path, train_point,fmt='%1.6f')   # X is an array
 
-    np.savetxt(label_path, train_labels.astype(int),fmt='%i')   # X is an array
+    #np.savetxt(label_path, train_labels.astype(int),fmt='%i')   # X is an array
     
     #show_point_clouds_in_points(path)

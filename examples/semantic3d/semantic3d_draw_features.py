@@ -282,26 +282,26 @@ def main():
     filelist_test = [
         # "area2_voxels.npy",
         # "area3_voxels.npy",
-        'mls2016_8class_20cm_ascii_area1_1_2_voxels.npy',
-        # 'mls2016_8class_20cm_ascii_area1_2_voxels.npy',
+
+        # 'mls2016_8class_20cm_ascii_area1_voxels.npy',
         # "mls2016_8class_20cm_ascii_area2_voxels.npy",
         # 'mls2016_8class_20cm_ascii_area3_voxels.npy',
 
-        # "bildstein_station1_xyz_intensity_rgb_voxels.npy",
-        # "bildstein_station3_xyz_intensity_rgb_voxels.npy",
-        # "domfountain_station1_xyz_intensity_rgb_voxels.npy",
-        # "domfountain_station3_xyz_intensity_rgb_voxels.npy",
-        # "neugasse_station1_xyz_intensity_rgb_voxels.npy",
-        # "sg27_station1_intensity_rgb_voxels.npy",
-        # "sg27_station5_intensity_rgb_voxels.npy",
-        # "untermaederbrunnen_station1_xyz_intensity_rgb_voxels.npy",
-        # "bildstein_station5_xyz_intensity_rgb_voxels.npy",
-        # "domfountain_station2_xyz_intensity_rgb_voxels.npy",
-        # "sg27_station4_intensity_rgb_voxels.npy",
-        # "sg27_station2_intensity_rgb_voxels.npy",
-        # "sg27_station9_intensity_rgb_voxels.npy",
-        # "sg28_station4_intensity_rgb_voxels.npy",
-        # "untermaederbrunnen_station3_xyz_intensity_rgb_voxels.npy",
+        "bildstein_station1_xyz_intensity_rgb_voxels.npy",
+        "bildstein_station3_xyz_intensity_rgb_voxels.npy",
+        "domfountain_station1_xyz_intensity_rgb_voxels.npy",
+        "domfountain_station3_xyz_intensity_rgb_voxels.npy",
+        "neugasse_station1_xyz_intensity_rgb_voxels.npy",
+        "sg27_station1_intensity_rgb_voxels.npy",
+        "sg27_station5_intensity_rgb_voxels.npy",
+        "untermaederbrunnen_station1_xyz_intensity_rgb_voxels.npy",
+        "bildstein_station5_xyz_intensity_rgb_voxels.npy",
+        "domfountain_station2_xyz_intensity_rgb_voxels.npy",
+        "sg27_station4_intensity_rgb_voxels.npy",
+        "sg27_station2_intensity_rgb_voxels.npy",
+        "sg27_station9_intensity_rgb_voxels.npy",
+        "sg28_station4_intensity_rgb_voxels.npy",
+        "untermaederbrunnen_station3_xyz_intensity_rgb_voxels.npy",
         ]
     N_CLASSES = 8
     print(filelist_train)
@@ -352,101 +352,46 @@ def main():
         # create the root folder
         os.makedirs(root_folder, exist_ok=True)
         
-        # create the log file
-        logs = open(os.path.join(root_folder, "log.txt"), "w")
-        logs.write("training with 10% tum")
-        logs.write("continue train")
-        logs.write("learning rate 1e-3")
-        logs.flush()
-        logs.write(str(filelist_train))
-        logs.write(str(filelist_val))
-        
-        logs.write(str(optimizer))
-        logs.flush()
 
         best_iou = 0.0
         # iterate over epochs
         for epoch in range(args.epochs):
-
-            #######
-            # training
-            net.train()
-
-            train_loss = 0
-            cm = np.zeros((N_CLASSES, N_CLASSES))
-            t = tqdm(train_loader, ncols=100, desc="Epoch {}".format(epoch))
             
-            for pts, features, seg in t:
-
-                features = features.cuda()
-                pts = pts.cuda()
-                seg = seg.cuda()
+            net.eval()
+            result = np.numpy()
+            with torch.no_grad(): 
                 
-                optimizer.zero_grad()
-                outputs = net(features, pts)
-                loss =  F.cross_entropy(outputs.view(-1, N_CLASSES), seg.view(-1))
-                loss.backward()
-                optimizer.step()
-                
-                output_np = np.argmax(outputs.cpu().detach().numpy(), axis=2).copy()
-                target_np = seg.cpu().numpy().copy()   # (16, 8192)
+                cm  = np.zeros((N_CLASSES, N_CLASSES))
+                t = tqdm(val_loader, ncols=100, desc="Epoch {}".format(epoch))
+                val_loss = 0
+                for pts, features, seg in t:
 
-                cm_ = confusion_matrix(target_np.ravel(), output_np.ravel(), labels=list(range(N_CLASSES)))
-                cm += cm_
+                    features = features.cuda()
+                    pts = pts.cuda()
+                    seg = seg.cuda()
 
-                oa = f"{metrics.stats_overall_accuracy(cm):.5f}"
-                aa = f"{metrics.stats_accuracy_per_class(cm)[0]:.5f}"
-                iou = f"{metrics.stats_iou_per_class(cm)[0]:.5f}"
+                    outputs, point_features = net(features, pts)
+                    np.concatenate((point_features, seg), axis=1)
 
-                train_loss += loss.detach().cpu().item()
+                    loss =  F.cross_entropy(outputs.view(-1, N_CLASSES), seg.view(-1))
+                    val_loss += loss.detach().cpu().item()
 
-                t.set_postfix(OA=wblue(oa), AA=wblue(aa), IOU=wblue(iou), LOSS=wblue(f"{train_loss/cm.sum():.4e}"))
+                    output_np = np.argmax(outputs.cpu().detach().numpy(), axis=2).copy()
+                    target_np = seg.cpu().numpy().copy()   # (16, 8192)
+                    cm_ = confusion_matrix(target_np.ravel(), output_np.ravel(), labels=list(range(N_CLASSES)))
+                    cm += cm_
 
+                    oa = f"{metrics.stats_overall_accuracy(cm):.5f}"
+                    aa = f"{metrics.stats_accuracy_per_class(cm)[0]:.5f}"
+                    iou = f"{metrics.stats_iou_per_class(cm)[0]:.5f}"
 
-            # write the logs
-            logs.write(f"{epoch} {oa} {aa} {iou}\n")
-            logs.flush()
+                    t.set_postfix(OA=wblue(oa), AA=wblue(aa), IOU=wblue(iou), LOSS=wblue(f"{val_loss/cm.sum():.4e}"))
+                    iouf = metrics.stats_iou_per_class(cm)[0]     
 
-            if epoch%2==0:
-                net.eval()
-                with torch.no_grad(): 
-                    
-                    cm  = np.zeros((N_CLASSES, N_CLASSES))
-                    t = tqdm(val_loader, ncols=100, desc="Epoch {}".format(epoch))
-                    val_loss = 0
-                    for pts, features, seg in t:
+        
+        print("best_iou",best_iou)   
 
-                        features = features.cuda()
-                        pts = pts.cuda()
-                        seg = seg.cuda()
-
-                        outputs = net(features, pts)
-
-                        loss =  F.cross_entropy(outputs.view(-1, N_CLASSES), seg.view(-1))
-                        val_loss += loss.detach().cpu().item()
-
-                        output_np = np.argmax(outputs.cpu().detach().numpy(), axis=2).copy()
-                        target_np = seg.cpu().numpy().copy()   # (16, 8192)
-                        cm_ = confusion_matrix(target_np.ravel(), output_np.ravel(), labels=list(range(N_CLASSES)))
-                        cm += cm_
-
-                        oa = f"{metrics.stats_overall_accuracy(cm):.5f}"
-                        aa = f"{metrics.stats_accuracy_per_class(cm)[0]:.5f}"
-                        iou = f"{metrics.stats_iou_per_class(cm)[0]:.5f}"
-
-                        t.set_postfix(OA=wblue(oa), AA=wblue(aa), IOU=wblue(iou), LOSS=wblue(f"{val_loss/cm.sum():.4e}"))
-                        iouf = metrics.stats_iou_per_class(cm)[0]          
-
-                    if iouf>best_iou:
-                        best_iou = iouf
-                        # save the model
-                        print("when iou equals ",iou)
-                        torch.save(net.state_dict(), os.path.join(root_folder, "state_dict.pth"))
-                    logs.write(f"{epoch} {oa} {aa} {iou}\n")
-                    logs.flush()
-                    
-        logs.close()
-
+      
     ##### TEST
     else:
         net.eval()

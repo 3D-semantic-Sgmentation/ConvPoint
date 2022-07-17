@@ -1,7 +1,12 @@
+# Semantic3D Example with ConvPoint
+
 # add the parent folder to the python path to access convpoint library
 import sys
 sys.path.append('../../')
+from utils import metrics as metrics
+import convpoint.knn.lib.python.nearest_neighbors as nearest_neighbors
 
+# from convpoint.knn.lib.python import nearest_neighbors as nearest_neighbors
 
 import numpy as np
 import argparse
@@ -9,7 +14,7 @@ from datetime import datetime
 import os
 import random
 from tqdm import tqdm
-
+import torch.nn as nn
 
 import torch
 import torch.utils.data
@@ -18,11 +23,13 @@ from torchvision import transforms
 
 from sklearn.metrics import confusion_matrix
 import time
-import utils.metrics as metrics
-import convpoint.knn.lib.python.nearest_neighbors as nearest_neighbors
+from ChildTuningOptimizer import ChildTuningAdamW
+from transformers.optimization import get_scheduler
+# import convpoint.knn.lib.python.nearest_neighbors as nearest_neighbors
 
 from PIL import Image
-from networks.network_seg_fusion import NetFusion
+
+N_CLASSES = 8
 
 class bcolors:
     HEADER = '\033[95m'
@@ -41,9 +48,9 @@ def wgreen(str):
     return bcolors.OKGREEN+str+bcolors.ENDC
 
 def nearest_correspondance(pts_src, pts_dest, data_src, K=1):
-    print(pts_dest.shape)
+    print(pts_dest)
     indices = nearest_neighbors.knn(pts_src.copy(), pts_dest.copy(), K, omp=True)
-    print(indices.shape)
+    print(indices)
     if K==1:
         indices = indices.ravel()
         data_dest = data_src[indices]
@@ -67,7 +74,6 @@ def rotate_point_cloud_z(batch_data):
                                 [0, 0, 1],])
     return np.dot(batch_data, rotation_matrix)
 
-
 # Part dataset only for training / validation
 class PartDataset():
 
@@ -76,7 +82,7 @@ class PartDataset():
                     iteration_number = None,
                     block_size=8,
                     npoints = 8192,
-                    nocolor=False):
+                    nocolor=True):
 
         self.folder = folder
         self.training = training
@@ -88,7 +94,7 @@ class PartDataset():
         self.iterations = iteration_number
         self.verbose = False
 
-
+        
         self.transform = transforms.ColorJitter(
             brightness=0.4,
             contrast=0.4,
@@ -153,7 +159,6 @@ class PartDataset():
     def __len__(self):
         return self.iterations
 
-
 class PartDatasetTest():
 
     def compute_mask(self, pt, bs):
@@ -166,7 +171,7 @@ class PartDatasetTest():
     def __init__ (self, filename, folder,
                     block_size=8,
                     npoints = 8192,
-                    test_step=0.8, nocolor=False):
+                    test_step=0.8, nocolor=True):
 
         self.folder = folder
         self.bs = block_size
@@ -183,7 +188,7 @@ class PartDatasetTest():
         self.pts = self.pts.astype(np.float)*step
 
     def __getitem__(self, index):
-        
+        index = random.randint(0, len(self.pts)-1)
         # get the data
         mask = self.compute_mask(self.pts[index], self.bs)
         pts = self.xyzrgb[mask]
@@ -199,7 +204,9 @@ class PartDatasetTest():
         if self.nocolor:
             fts = np.ones((pts.shape[0], 1))
         else:
-            fts = pts[:,3:6]
+            # fts = pts[:,3:6]
+            fts = np.zeros((pts.shape[0], 3))
+            fts[:,2]=np.ones((pts.shape[0]))
             fts = fts.astype(np.float32)
             fts = fts / 255 - 0.5
 
@@ -216,121 +223,243 @@ class PartDatasetTest():
 
 
 def get_model(model_name, input_channels, output_channels, args):
-    if model_name == "SegBig":
-        from networks.network_seg import SegBig as Net
-    return Net(input_channels, output_channels, args=args)
 
+    if model_name == "SegBig":
+        if args.finetuning:
+            from networks.network_seg import SegBig_FineTunning as Net
+            return Net(input_channels, output_channels)
+        from networks.network_seg import SegBig as Net
+        return Net(input_channels, output_channels, args=args)
+    else:
+        if args.finetuning:
+            from networks.network_seg import SegSmall_FineTuning as Net
+            return Net(input_channels, output_channels)
+        from networks.network_seg import SegSmall as Net
+        return Net(input_channels, output_channels)
+
+def calculate_fisher(net, train_loader):
+    '''
+    Calculate Fisher Information for different parameters
+    '''
+    max_grad_norm = 1.0
+    reserve_p = 0.4
+    gradient_mask = dict()
+    model = net
+    model.train()
+
+    for name, params in model.named_parameters(): # 132 layers
+        if 'cv' in name or "bn" in name:  # 130 layers
+            gradient_mask[params] = params.new_zeros(params.size())
+    N = len(train_loader)
+    
+    t = tqdm(train_loader, ncols=100, desc="Epoch {}".format(1))
+    for pts, features, seg in t:
+        features = features.cuda()
+        pts = pts.cuda()
+        seg = seg.cuda()
+
+        outputs = net(features, pts)
+        loss =  F.cross_entropy(outputs.view(-1, N_CLASSES), seg.view(-1))
+        loss.backward()
+
+        for name, params in model.named_parameters():
+            if 'cv' in name or "bn" in name:
+                torch.nn.utils.clip_grad_norm_(params, max_grad_norm)
+                gradient_mask[params] += (params.grad ** 2) / N
+        model.zero_grad()
+
+    #print(gradient_mask)
+    print('Calculate Fisher Information')
+
+    # Numpy
+    r = None
+    for k, v in gradient_mask.items():
+        v = v.view(-1).cpu().numpy()
+        if r is None:
+            r = v
+        else:
+            r = np.append(r, v)
+    # print(r)
+    
+    polar = np.percentile(r, (1-reserve_p)*100)
+
+    for k in gradient_mask:
+        gradient_mask[k] = gradient_mask[k] >= polar
+    # print(gradient_mask)
+   
+    print('Polar => {}'.format(polar))
+
+    # TODO: pytorch: torch.kthvalue
+    
+    return gradient_mask
+
+def create_optimizer_and_scheduler(net,num_training_steps: int,learning_rate):
+    """
+    Setup the optimizer and the learning rate scheduler.
+    We provide a reasonable default that works well. If you want to use something else, you can pass a tuple in the
+    Trainer's init through :obj:`optimizers`, or subclass and override this method in a subclass.
+    """
+    weight_decay= 0
+    no_decay = ["bias", "bn"]
+    optimizer_grouped_parameters = [
+            {
+                "params": [p for n, p in net.named_parameters() if not any(nd in n for nd in no_decay)],
+                "weight_decay": weight_decay,
+            },
+            {
+                "params": [p for n, p in net.named_parameters() if any(nd in n for nd in no_decay)],
+                "weight_decay": 0.0,
+            },
+    ]
+    optimizer_cls = ChildTuningAdamW
+    optimizer_kwargs = {
+        "betas": (0.9, 0.999),
+        "eps": 1e-8,
+        }
+    optimizer_kwargs["lr"] = learning_rate
+    print(optimizer_kwargs)
+    optimizer = optimizer_cls(optimizer_grouped_parameters, mode="ChildTuning-D", **optimizer_kwargs)
+
+    print("number of training step",num_training_steps)
+    
+    lr_scheduler = get_scheduler(
+            "linear",
+            optimizer,
+            num_warmup_steps=20,
+            num_training_steps=num_training_steps,
+        )
+    return optimizer, lr_scheduler
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--rootdir', '-s', help='Path to data folder')
     parser.add_argument("--savedir", type=str, default="./results")
     parser.add_argument('--block_size', help='Block size', type=float, default=8)
-    parser.add_argument("--epochs", type=int, default=20)
-    parser.add_argument("--batch_size", "-b", type=int, default=16)
-    parser.add_argument("--iter", "-i", type=int, default=1000)
+    parser.add_argument("--epochs", type=int, default=500)
+    parser.add_argument("--batch_size", "-b", type=int, default=8)
+    parser.add_argument("--iter", "-i", type=int, default=1200)
     parser.add_argument("--npoints", "-n", type=int, default=8192)
-    parser.add_argument("--threads", type=int, default=4)
-    parser.add_argument("--model_rgb", type=str, required=True)
-    parser.add_argument("--model_noc", type=str, required=True)
+    parser.add_argument("--threads", type=int, default=2)
+    parser.add_argument("--nocolor",default=True)
     parser.add_argument("--test", action="store_true")
+    parser.add_argument("--finetuning", action="store_true")
     parser.add_argument("--savepts", action="store_true")
     parser.add_argument("--test_step", default=0.8, type=float)
-    parser.add_argument("--model", type=str, default="SegBig")
+    parser.add_argument("--model", default="SegBig", type=str)
+    parser.add_argument("--drop", default=0.5, type=float)
     args = parser.parse_args()
 
     time_string = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
-    root_folder = os.path.join(args.savedir, "sem8_{}_fusion_{}".format(
-            args.npoints, time_string))
-
+    root_folder = os.path.join(args.savedir, "{}_{}_childtuning_nocolor{}_drop{}_{}".format(
+            args.model, args.npoints, args.nocolor, args.drop, time_string))
 
     filelist_train=[
-        "bildstein_station1_xyz_intensity_rgb_voxels.npy",
-        "bildstein_station3_xyz_intensity_rgb_voxels.npy",
-        "bildstein_station5_xyz_intensity_rgb_voxels.npy",
-        "domfountain_station1_xyz_intensity_rgb_voxels.npy",
-        "domfountain_station2_xyz_intensity_rgb_voxels.npy",
-        "domfountain_station3_xyz_intensity_rgb_voxels.npy",
-        "neugasse_station1_xyz_intensity_rgb_voxels.npy",
-        "sg27_station1_intensity_rgb_voxels.npy",
-        "sg27_station2_intensity_rgb_voxels.npy",
-        "sg27_station4_intensity_rgb_voxels.npy",
-        "sg27_station5_intensity_rgb_voxels.npy",
-        "sg27_station9_intensity_rgb_voxels.npy",
-        "sg28_station4_intensity_rgb_voxels.npy",
-        "untermaederbrunnen_station1_xyz_intensity_rgb_voxels.npy",
-        "untermaederbrunnen_station3_xyz_intensity_rgb_voxels.npy",
+        # "bildstein_station1_xyz_intensity_rgb_voxels.npy",
+        # "bildstein_station3_xyz_intensity_rgb_voxels.npy",
+        # "domfountain_station1_xyz_intensity_rgb_voxels.npy",
+        # "domfountain_station3_xyz_intensity_rgb_voxels.npy",
+        # "neugasse_station1_xyz_intensity_rgb_voxels.npy",
+        # "sg27_station1_intensity_rgb_voxels.npy",
+        # "sg27_station2_intensity_rgb_voxels.npy",
+        # "untermaederbrunnen_station1_xyz_intensity_rgb_voxels.npy",
+        'mls2016_8class_20cm_ascii_area1_1_1_voxels.npy',
+        # "L003_1_voxels.npy",
+    ]
+
+    filelist_val=[
+        #"area3_voxels.npy",
+        'mls2016_8class_20cm_ascii_area1_1_2_voxels.npy',
+        'mls2016_8class_20cm_ascii_area1_2_voxels.npy',
+        "mls2016_8class_20cm_ascii_area2_voxels.npy",
+        'mls2016_8class_20cm_ascii_area3_voxels.npy',
+        # "L001_voxels.npy",
+        # "L002_voxels.npy",
+        # "L003_2_voxels.npy",
+        # "L004_voxels.npy",
     ]
 
     filelist_test = [
-        "birdfountain_station1_xyz_intensity_rgb_voxels.npy",
-        "castleblatten_station1_intensity_rgb_voxels.npy",
-        "castleblatten_station5_xyz_intensity_rgb_voxels.npy",
-        "marketplacefeldkirch_station1_intensity_rgb_voxels.npy",
-        "marketplacefeldkirch_station4_intensity_rgb_voxels.npy",
-        "marketplacefeldkirch_station7_intensity_rgb_voxels.npy",
-        "sg27_station10_intensity_rgb_voxels.npy",
-        "sg27_station3_intensity_rgb_voxels.npy",
-        "sg27_station6_intensity_rgb_voxels.npy",
-        "sg27_station8_intensity_rgb_voxels.npy",
-        "sg28_station2_intensity_rgb_voxels.npy",
-        "sg28_station5_xyz_intensity_rgb_voxels.npy",
-        "stgallencathedral_station1_intensity_rgb_voxels.npy",
-        "stgallencathedral_station3_intensity_rgb_voxels.npy",
-        "stgallencathedral_station6_intensity_rgb_voxels.npy",
+
         ]
 
-    N_CLASSES = 8
-
+    
+    print(filelist_train)
+    print(filelist_val)
     # create model
     print("Creating the network...", end="", flush=True)
-    net_rgb = get_model(args.model, input_channels=3, output_channels=N_CLASSES, args=args)
-    net_noc = get_model(args.model, input_channels=1, output_channels=N_CLASSES, args=args)
-    net_rgb.load_state_dict(torch.load(os.path.join(args.model_rgb, "state_dict.pth")))
-    net_noc.load_state_dict(torch.load(os.path.join(args.model_noc, "state_dict.pth")))
-    net_rgb.cuda()
-    net_noc.cuda()
-    net_rgb.eval()
-    net_noc.eval()
-    
-    net_fusion = NetFusion(input_channels=2*128, output_channels=N_CLASSES)
+    if args.nocolor:
+        net = get_model(args.model, input_channels=1, output_channels=N_CLASSES, args=args)
+    else:
+        net = get_model(args.model, input_channels=3, output_channels=N_CLASSES, args=args)
     if args.test:
-        net_fusion.load_state_dict(torch.load(os.path.join(args.savedir, "state_dict.pth")))
-        net_fusion.eval()
-    net_fusion.cuda()
+        net.load_state_dict(torch.load(os.path.join(args.savedir, "state_dict.pth")))
+    if args.finetuning:
+        net.load_state_dict(torch.load(os.path.join(args.savedir, "state_dict.pth")))
+        print("loaded previous model")
+
+    layers = []
+    for name, param in net.named_parameters():
+        print(name,param.requires_grad)
+        layers.append([name,param.requires_grad])
+    
+    # net.fcout = nn.Linear(128,N_CLASSES,bias=True)
+    # print(net.fcout)
+    # print("Finetuning")
+
+    net.cuda()
     print("Done")
 
-
+    ##### TRAIN
     if not args.test:
+        
 
         print("Create the datasets...", end="", flush=True)
 
         ds = PartDataset(filelist_train, args.rootdir,
                                 training=True, block_size=args.block_size,
                                 iteration_number=args.batch_size*args.iter,
-                                npoints=args.npoints)
+                                npoints=args.npoints,
+                                nocolor=args.nocolor)
         train_loader = torch.utils.data.DataLoader(ds, batch_size=args.batch_size, shuffle=True,
-                                            num_workers=args.threads
-                                            )
+                                            num_workers=args.threads)
+
+        val = PartDataset(filelist_val, args.rootdir,
+                                training=True, block_size=args.block_size,
+                                iteration_number=args.batch_size*args.iter,
+                                npoints=args.npoints,
+                                nocolor=args.nocolor)
+        val_loader = torch.utils.data.DataLoader(val, batch_size=args.batch_size, shuffle=True,
+                                            num_workers=args.threads)
         print("Done")
 
 
         print("Create optimizer...", end="", flush=True)
-        optimizer = torch.optim.Adam(net_fusion.parameters(), lr=1e-3)
-        print("Done")
+        # optimizer = torch.optim.Adam(net.parameters(), lr=1e-5)
+        optimizer, lr_scheduler = create_optimizer_and_scheduler(net, args.epochs, 1e-5)
+        # optimizer = torch.optim.Adam(net.parameters(), lr=1e-5)
         
+
+        gradient_mask=calculate_fisher(net, train_loader)
+        optimizer.set_gradient_mask(gradient_mask)  
+        print("Done")
         # create the root folder
         os.makedirs(root_folder, exist_ok=True)
-        
         # create the log file
         logs = open(os.path.join(root_folder, "log.txt"), "w")
+        logs.write(str(layers))
+        logs.write(str(filelist_train))
+        logs.write(str(filelist_val))
+        
+        logs.write(str(optimizer))
+        logs.flush()
 
+        best_iou = 0.0
         # iterate over epochs
         for epoch in range(args.epochs):
 
             #######
             # training
-            net_fusion.train()
+            net.train()
 
             train_loss = 0
             cm = np.zeros((N_CLASSES, N_CLASSES))
@@ -338,23 +467,17 @@ def main():
             for pts, features, seg in t:
 
                 features = features.cuda()
-                features_nc = torch.ones(features.shape[0], features.shape[1], 1).cuda()
                 pts = pts.cuda()
                 seg = seg.cuda()
-
-                with torch.no_grad():
-                    rgb_out, rgb_features = net_rgb(features, pts, return_features=True)
-                    noc_out, noc_features = net_noc(features_nc, pts, return_features=True)
-
                 
                 optimizer.zero_grad()
-                outputs = net_fusion(rgb_out, noc_out, rgb_features, noc_features, pts)
+                outputs = net(features, pts)
                 loss =  F.cross_entropy(outputs.view(-1, N_CLASSES), seg.view(-1))
                 loss.backward()
                 optimizer.step()
-
+                
                 output_np = np.argmax(outputs.cpu().detach().numpy(), axis=2).copy()
-                target_np = seg.cpu().numpy().copy()
+                target_np = seg.cpu().numpy().copy()   # (16, 8192)
 
                 cm_ = confusion_matrix(target_np.ravel(), output_np.ravel(), labels=list(range(N_CLASSES)))
                 cm += cm_
@@ -367,24 +490,63 @@ def main():
 
                 t.set_postfix(OA=wblue(oa), AA=wblue(aa), IOU=wblue(iou), LOSS=wblue(f"{train_loss/cm.sum():.4e}"))
 
-            # save the model
-            torch.save(net_fusion.state_dict(), os.path.join(root_folder, "state_dict.pth"))
+
+            print("number %d epoch learning rate is: %f" % (epoch, optimizer.param_groups[0]['lr']))
 
             # write the logs
             logs.write(f"{epoch} {oa} {aa} {iou}\n")
             logs.flush()
 
+            if epoch%2==0:
+                with torch.no_grad(): 
+                    net.eval()
+                    cm   = np.zeros((N_CLASSES, N_CLASSES))
+                    t = tqdm(val_loader, ncols=100, desc="Epoch {}".format(epoch))
+                    val_loss = 0
+                    for pts, features, seg in t:
+
+                        features = features.cuda()
+                        pts = pts.cuda()
+                        seg = seg.cuda()
+
+                        outputs = net(features, pts)
+
+                        loss =  F.cross_entropy(outputs.view(-1, N_CLASSES), seg.view(-1))
+                        val_loss += loss.detach().cpu().item()
+
+                        output_np = np.argmax(outputs.cpu().detach().numpy(), axis=2).copy()
+                        target_np = seg.cpu().numpy().copy()   # (16, 8192)
+                        cm_ = confusion_matrix(target_np.ravel(), output_np.ravel(), labels=list(range(N_CLASSES)))
+                        cm += cm_
+
+                        oa = f"{metrics.stats_overall_accuracy(cm):.5f}"
+                        aa = f"{metrics.stats_accuracy_per_class(cm)[0]:.5f}"
+                        iou = f"{metrics.stats_iou_per_class(cm)[0]:.5f}"
+
+                        t.set_postfix(OA=wblue(oa), AA=wblue(aa), IOU=wblue(iou), LOSS=wblue(f"{val_loss/cm.sum():.4e}"))
+                        iouf = metrics.stats_iou_per_class(cm)[0]          
+
+                    if iouf>best_iou:
+                        best_iou = iouf
+                        # save the model
+                        print("when iou equals ",iou)
+                        torch.save(net.state_dict(), os.path.join(root_folder, "state_dict.pth"))
+                    logs.write(f"{epoch} {oa} {aa} {iou}\n")
+                    logs.flush()
+            lr_scheduler.step()
+
         logs.close()
 
+    ##### TEST
     else:
-
-        net_fusion.eval()
+        net.eval()
         for filename in filelist_test:
             print(filename)
             ds = PartDatasetTest(filename, args.rootdir,
                             block_size=args.block_size,
                             npoints= args.npoints,
-                            test_step=args.test_step
+                            test_step=args.test_step,
+                            nocolor=args.nocolor
                             )
             loader = torch.utils.data.DataLoader(ds, batch_size=args.batch_size, shuffle=False,
                                             num_workers=args.threads
@@ -393,26 +555,28 @@ def main():
             xyzrgb = ds.xyzrgb[:,:3]
             scores = np.zeros((xyzrgb.shape[0], N_CLASSES))
             with torch.no_grad():
-                t = tqdm(loader, ncols=80)
+                t = tqdm(loader, ncols=100)
                 for pts, features, indices in t:
                     
                     features = features.cuda()
-                    features_nc = torch.ones(features.shape[0], features.shape[1], 1).cuda()
+                    #print(features)
+                    #print(pts)
                     pts = pts.cuda()
-
-                    rgb_out, rgb_features = net_rgb(features, pts, return_features=True)
-                    noc_out, noc_features = net_noc(features_nc, pts, return_features=True)
-                    outputs = net_fusion(rgb_out, noc_out, rgb_features, noc_features, pts)
-
+                    outputs = net(features, pts)
+                    print(outputs)
                     outputs_np = outputs.cpu().numpy().reshape((-1, N_CLASSES))
+                    
                     scores[indices.cpu().numpy().ravel()] += outputs_np
+                    #print(scores[indices[0][0]])
             
             mask = np.logical_not(scores.sum(1)==0)
+            #print(mask)
             scores = scores[mask]
+            
             pts_src = xyzrgb[mask]
 
             # create the scores for all points
-            scores = nearest_correspondance(pts_src, xyzrgb, scores, K=1)
+            scores = nearest_correspondance(pts_src.astype(np.float32), xyzrgb.astype(np.float32), scores, K=1)
 
             # compute softmax
             scores = scores - scores.max(axis=1)[:,None]
@@ -422,7 +586,7 @@ def main():
             os.makedirs(os.path.join(args.savedir, "results"), exist_ok=True)
 
             # saving labels
-            save_fname = os.path.join(args.savedir, "results", filename)
+            save_fname = os.path.join(args.savedir, "results", filename.replace(".npy",".labels"))
             scores = scores.argmax(1)
             np.savetxt(save_fname,scores,fmt='%d')
 
@@ -431,6 +595,7 @@ def main():
                 xyzrgb = np.concatenate([xyzrgb, np.expand_dims(scores,1)], axis=1)
                 np.savetxt(save_fname,xyzrgb,fmt=['%.4f','%.4f','%.4f','%d'])
 
+            # break
 
 if __name__ == '__main__':
     main()

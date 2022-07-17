@@ -323,8 +323,8 @@ def main():
     parser.add_argument('--rootdir', '-s', help='Path to data folder')
     parser.add_argument("--savedir", type=str, default="./results")
     parser.add_argument('--block_size', help='Block size', type=float, default=16)
-    parser.add_argument("--epochs", type=int, default=101)
-    parser.add_argument("--batch_size", "-b", type=int, default=16)
+    parser.add_argument("--epochs", type=int, default=201)
+    parser.add_argument("--batch_size", "-b", type=int, default=8)
     parser.add_argument("--iter", "-i", type=int, default=1200)
     parser.add_argument("--npoints", "-n", type=int, default=8192)
     parser.add_argument("--threads", type=int, default=4)
@@ -342,10 +342,6 @@ def main():
             args.model, args.npoints, args.nocolor, args.drop, time_string))
 
     filelist_train=[
-        "mls2016_8class_20cm_ascii_area2_voxels.npy",
-
-    ]
-    filelist_train_trans=[
         "bildstein_station1_xyz_intensity_rgb_voxels.npy",
         "bildstein_station3_xyz_intensity_rgb_voxels.npy",
         "domfountain_station1_xyz_intensity_rgb_voxels.npy",
@@ -354,12 +350,23 @@ def main():
         "sg27_station1_intensity_rgb_voxels.npy",
         "sg27_station2_intensity_rgb_voxels.npy",
         "untermaederbrunnen_station1_xyz_intensity_rgb_voxels.npy",
+
+    ]
+    filelist_train_trans=[
+       # "mls2016_8class_20cm_ascii_area1_1_voxels.npy",
+       "L003_1_voxels.npy",
+        "L001_voxels.npy",
+        "L002_voxels.npy",
+        "L003_2_voxels.npy",
+        "L004_voxels.npy",
     ]
     
 
     filelist_val=[
         #"area3_voxels.npy",
         "mls2016_8class_20cm_ascii_area1_voxels.npy",
+        "mls2016_8class_20cm_ascii_area2_voxels.npy",
+        "mls2016_8class_20cm_ascii_area3_voxels.npy",
         #"mls2016_8class_20cm_ascii_area1_voxels.npy",
     ]
     print(filelist_train,filelist_train_trans)
@@ -379,7 +386,7 @@ def main():
     net.cuda()
     print("Done")
     print("discriminator output 1 class(Linear)")
-    print("discriminator at layer 6 features")
+    print("discriminator with only transfer disc. loss")
     # log
     log = logging.getLogger(__name__)
     log.setLevel(logging.INFO)
@@ -442,9 +449,8 @@ def main():
             t = tqdm(zip(train_loader,train_trans_loader), ncols=100, desc="Epoch {}".format(epoch))
 
             for (pts, features, seg, clabel),(pts_trans, features_trans, seg_trans, clabel_trans) in t:
-
-            
-
+               
+        
                 # ---------------------
                 #  Train Discriminator Semantic3D
                 # --------------------
@@ -480,10 +486,10 @@ def main():
                 #discriminator_loss_trans = F.binary_cross_entropy_with_logits(class_out_trans.view(-1), clabel_trans.view(-1))
                 discriminator_loss_trans = torch.nn.MSELoss()(class_out_trans.view(-1),clabel_trans.view(-1))
 
-                seg_loss_trans = F.cross_entropy(outputs_trans.view(-1, N_CLASSES), seg_trans.view(-1))
+                #seg_loss_trans = F.cross_entropy(outputs_trans.view(-1, N_CLASSES), seg_trans.view(-1))
                 
                 # loss = seg_loss+discriminator_loss                
-                loss_sum = seg_loss_trans+(seg_loss+discriminator_loss)
+                loss_sum = discriminator_loss_trans+(seg_loss+discriminator_loss)
                 loss_sum.backward()
                 optimizer.step()
                 

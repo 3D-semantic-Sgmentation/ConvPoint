@@ -14,7 +14,7 @@ from datetime import datetime
 import os
 import random
 from tqdm import tqdm
-
+import torch.nn as nn
 
 import torch
 import torch.utils.data
@@ -220,11 +220,17 @@ class PartDatasetTest():
 
 
 def get_model(model_name, input_channels, output_channels, args):
+
     if model_name == "SegBig":
+        if args.finetuning:
+            from networks.network_seg import SegBig_FineTunning as Net
+            return Net(input_channels, output_channels)
         from networks.network_seg import SegBig as Net
-        print("SegBig")
         return Net(input_channels, output_channels, args=args)
     else:
+        if args.finetuning:
+            from networks.network_seg import SegSmall_FineTuning as Net
+            return Net(input_channels, output_channels)
         from networks.network_seg import SegSmall as Net
         return Net(input_channels, output_channels)
 
@@ -235,14 +241,14 @@ def main():
     parser.add_argument('--rootdir', '-s', help='Path to data folder')
     parser.add_argument("--savedir", type=str, default="./results")
     parser.add_argument('--block_size', help='Block size', type=float, default=16)
-    parser.add_argument("--epochs", type=int, default=101)
-    parser.add_argument("--batch_size", "-b", type=int, default=16)
+    parser.add_argument("--epochs", type=int, default=200)
+    parser.add_argument("--batch_size", "-b", type=int, default=8)
     parser.add_argument("--iter", "-i", type=int, default=1200)
     parser.add_argument("--npoints", "-n", type=int, default=8192)
-    parser.add_argument("--threads", type=int, default=4)
+    parser.add_argument("--threads", type=int, default=2)
     parser.add_argument("--nocolor",default=True)
     parser.add_argument("--test", action="store_true")
-    parser.add_argument("--continuetrain", action="store_true")
+    parser.add_argument("--finetuning", action="store_true")
     parser.add_argument("--savepts", action="store_true")
     parser.add_argument("--test_step", default=0.8, type=float)
     parser.add_argument("--model", default="SegBig", type=str)
@@ -250,7 +256,7 @@ def main():
     args = parser.parse_args()
 
     time_string = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
-    root_folder = os.path.join(args.savedir, "{}_{}_nocolor{}_drop{}_{}".format(
+    root_folder = os.path.join(args.savedir, "{}_{}_finetuning_linearlayer_nocolor{}_drop{}_{}".format(
             args.model, args.npoints, args.nocolor, args.drop, time_string))
 
     filelist_train=[
@@ -260,49 +266,29 @@ def main():
         # "domfountain_station3_xyz_intensity_rgb_voxels.npy",
         # "neugasse_station1_xyz_intensity_rgb_voxels.npy",
         # "sg27_station1_intensity_rgb_voxels.npy",
-        # "sg27_station5_intensity_rgb_voxels.npy",
+        # "sg27_station2_intensity_rgb_voxels.npy",
         # "untermaederbrunnen_station1_xyz_intensity_rgb_voxels.npy",
-        'mls2016_8class_20cm_ascii_area1_1_voxels.npy',
+        'mls2016_8class_20cm_ascii_area1_1_1_voxels.npy',
+        # "L003_1_voxels.npy",
     ]
 
     filelist_val=[
-        # "bildstein_station5_xyz_intensity_rgb_voxels.npy",
-        # "domfountain_station2_xyz_intensity_rgb_voxels.npy",
-        # "sg27_station4_intensity_rgb_voxels.npy",
-        # "sg27_station2_intensity_rgb_voxels.npy",
-        # "sg27_station9_intensity_rgb_voxels.npy",
-        # "sg28_station4_intensity_rgb_voxels.npy",
-        # "untermaederbrunnen_station3_xyz_intensity_rgb_voxels.npy",
-        # 'mls2016_8class_20cm_ascii_area1_1_2_voxels.npy',
+        #"area3_voxels.npy",
+        'mls2016_8class_20cm_ascii_area1_1_2_voxels.npy',
         'mls2016_8class_20cm_ascii_area1_2_voxels.npy',
         "mls2016_8class_20cm_ascii_area2_voxels.npy",
         'mls2016_8class_20cm_ascii_area3_voxels.npy',
+        # "L001_voxels.npy",
+        # "L002_voxels.npy",
+        # "L003_2_voxels.npy",
+        # "L004_voxels.npy",
     ]
 
-    filelist_test = [
-        # "area2_voxels.npy",
-        # "area3_voxels.npy",
-        'mls2016_8class_20cm_ascii_area1_1_2_voxels.npy',
-        # 'mls2016_8class_20cm_ascii_area1_2_voxels.npy',
-        # "mls2016_8class_20cm_ascii_area2_voxels.npy",
-        # 'mls2016_8class_20cm_ascii_area3_voxels.npy',
 
-        # "bildstein_station1_xyz_intensity_rgb_voxels.npy",
-        # "bildstein_station3_xyz_intensity_rgb_voxels.npy",
-        # "domfountain_station1_xyz_intensity_rgb_voxels.npy",
-        # "domfountain_station3_xyz_intensity_rgb_voxels.npy",
-        # "neugasse_station1_xyz_intensity_rgb_voxels.npy",
-        # "sg27_station1_intensity_rgb_voxels.npy",
-        # "sg27_station5_intensity_rgb_voxels.npy",
-        # "untermaederbrunnen_station1_xyz_intensity_rgb_voxels.npy",
-        # "bildstein_station5_xyz_intensity_rgb_voxels.npy",
-        # "domfountain_station2_xyz_intensity_rgb_voxels.npy",
-        # "sg27_station4_intensity_rgb_voxels.npy",
-        # "sg27_station2_intensity_rgb_voxels.npy",
-        # "sg27_station9_intensity_rgb_voxels.npy",
-        # "sg28_station4_intensity_rgb_voxels.npy",
-        # "untermaederbrunnen_station3_xyz_intensity_rgb_voxels.npy",
+    filelist_test = [
+
         ]
+
     N_CLASSES = 8
     print(filelist_train)
     print(filelist_val)
@@ -312,18 +298,27 @@ def main():
         net = get_model(args.model, input_channels=1, output_channels=N_CLASSES, args=args)
     else:
         net = get_model(args.model, input_channels=3, output_channels=N_CLASSES, args=args)
-    if args.continuetrain:
-        net.load_state_dict(torch.load(os.path.join(args.savedir, "state_dict.pth")))
-        print("continue train")
     if args.test:
-        print("reload models")
         net.load_state_dict(torch.load(os.path.join(args.savedir, "state_dict.pth")))
+    if args.finetuning:
+        net.load_state_dict(torch.load(os.path.join(args.savedir, "state_dict.pth")))
+        print("loaded previous model")
+
+    layers = []
+    for name, param in net.named_parameters():
+        print(name,param.requires_grad)
+        layers.append([name,param.requires_grad])
+    
+    net.fcout = nn.Linear(128,8,bias=True)
+    print(net.fcout)
+    print("Finetuning")
+
     net.cuda()
     print("Done")
 
     ##### TRAIN
     if not args.test:
-
+                
 
         print("Create the datasets...", end="", flush=True)
 
@@ -346,18 +341,16 @@ def main():
 
 
         print("Create optimizer...", end="", flush=True)
-        optimizer = torch.optim.Adam(net.parameters(), lr=1e-3)
+        optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, net.parameters()), lr=1e-5)
+        # optimizer = torch.optim.Adam(net.parameters(), lr=1e-5)
         print("Done")
-        
-        # create the root folder
+
+
+                # create the root folder
         os.makedirs(root_folder, exist_ok=True)
-        
         # create the log file
         logs = open(os.path.join(root_folder, "log.txt"), "w")
-        logs.write("training with 10% tum")
-        logs.write("continue train")
-        logs.write("learning rate 1e-3")
-        logs.flush()
+        logs.write(str(layers))
         logs.write(str(filelist_train))
         logs.write(str(filelist_val))
         
@@ -403,15 +396,15 @@ def main():
                 t.set_postfix(OA=wblue(oa), AA=wblue(aa), IOU=wblue(iou), LOSS=wblue(f"{train_loss/cm.sum():.4e}"))
 
 
+
             # write the logs
             logs.write(f"{epoch} {oa} {aa} {iou}\n")
             logs.flush()
 
             if epoch%2==0:
-                net.eval()
                 with torch.no_grad(): 
-                    
-                    cm  = np.zeros((N_CLASSES, N_CLASSES))
+                    net.eval()
+                    cm   = np.zeros((N_CLASSES, N_CLASSES))
                     t = tqdm(val_loader, ncols=100, desc="Epoch {}".format(epoch))
                     val_loss = 0
                     for pts, features, seg in t:
@@ -445,6 +438,9 @@ def main():
                     logs.write(f"{epoch} {oa} {aa} {iou}\n")
                     logs.flush()
                     
+
+
+
         logs.close()
 
     ##### TEST
@@ -473,6 +469,7 @@ def main():
                     #print(pts)
                     pts = pts.cuda()
                     outputs = net(features, pts)
+                    print(outputs)
                     outputs_np = outputs.cpu().numpy().reshape((-1, N_CLASSES))
                     
                     scores[indices.cpu().numpy().ravel()] += outputs_np

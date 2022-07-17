@@ -14,6 +14,7 @@ from datetime import datetime
 import os
 import random
 from tqdm import tqdm
+import itertools    
 
 
 import torch
@@ -23,11 +24,19 @@ from torchvision import transforms
 
 from sklearn.metrics import confusion_matrix
 import time
+from torch.utils.data import TensorDataset, ConcatDataset
+import logging
 
 # import convpoint.knn.lib.python.nearest_neighbors as nearest_neighbors
 
 from PIL import Image
+torch.cuda.empty_cache()
+import gc
 
+gc.collect()
+torch.cuda.memory_summary(device=None, abbreviated=False)
+torch.cuda.empty_cache()
+print(torch.cuda.memory_allocated(device="cuda:0"))
 class bcolors:
     HEADER = '\033[95m'
     OKBLUE = '\033[94m'
@@ -79,7 +88,8 @@ class PartDataset():
                     iteration_number = None,
                     block_size=8,
                     npoints = 8192,
-                    nocolor=True):
+                    nocolor=True,
+                    transfer=False):
 
         self.folder = folder
         self.training = training
@@ -90,6 +100,7 @@ class PartDataset():
         self.npoints = npoints
         self.iterations = iteration_number
         self.verbose = False
+        self.transfer = transfer
 
         
         self.transform = transforms.ColorJitter(
@@ -151,6 +162,11 @@ class PartDataset():
         fts = torch.from_numpy(fts).float()
         lbs = torch.from_numpy(lbs).long()
 
+        # if self.transfer==True:
+        #     clabel = torch.from_numpy(np.zeros(lbs.shape[0])).float()
+        # if self.transfer==False:
+        #     clabel = torch.from_numpy(np.ones(lbs.shape[0])).float()
+
         return pts, fts, lbs
 
     def __len__(self):
@@ -185,7 +201,7 @@ class PartDatasetTest():
         self.pts = self.pts.astype(np.float)*step
 
     def __getitem__(self, index):
-        index = random.randint(0, len(self.pts)-1)
+        # index = random.randint(0, len(self.pts)-1)
         # get the data
         mask = self.compute_mask(self.pts[index], self.bs)
         pts = self.xyzrgb[mask]
@@ -222,131 +238,207 @@ class PartDatasetTest():
 def get_model(model_name, input_channels, output_channels, args):
     if model_name == "SegBig":
         from networks.network_seg import SegBig as Net
-        print("SegBig")
         return Net(input_channels, output_channels, args=args)
-    else:
+    elif model_name == "SegSmall":
         from networks.network_seg import SegSmall as Net
         return Net(input_channels, output_channels)
+    elif model_name == "Disctiminiator":
+        from networks.network_seg import SegSmall_Discriminator as Net
+        return Net(input_channels, output_channels)
+    elif model_name == "Gan":
+        from networks.network_seg import SegSmall_Features_Generator as GenNet
+        from networks.network_seg import SegSmall_Features_Discriminotor as DisNet
+        return GenNet(input_channels, output_channels), DisNet(input_channels, output_channels)
+        
+    
+class TqdmLoggingHandler(logging.Handler):
+    def __init__(self, level=logging.NOTSET):
+        super().__init__(level)
 
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            tqdm.write(msg)
+            self.flush()
+        except Exception:
+            self.handleError(record)  
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--rootdir', '-s', help='Path to data folder')
     parser.add_argument("--savedir", type=str, default="./results")
-    parser.add_argument('--block_size', help='Block size', type=float, default=16)
-    parser.add_argument("--epochs", type=int, default=101)
-    parser.add_argument("--batch_size", "-b", type=int, default=16)
+    parser.add_argument('--block_size', help='Block size', type=float, default=4)
+    parser.add_argument("--epochs", type=int, default=201)
+    parser.add_argument("--batch_size", "-b", type=int, default=4)
     parser.add_argument("--iter", "-i", type=int, default=1200)
     parser.add_argument("--npoints", "-n", type=int, default=8192)
-    parser.add_argument("--threads", type=int, default=4)
+    parser.add_argument("--threads", type=int, default=2)
     parser.add_argument("--nocolor",default=True)
     parser.add_argument("--test", action="store_true")
-    parser.add_argument("--continuetrain", action="store_true")
     parser.add_argument("--savepts", action="store_true")
+    parser.add_argument("--finetuning", action="store_true")
     parser.add_argument("--test_step", default=0.8, type=float)
-    parser.add_argument("--model", default="SegBig", type=str)
+    parser.add_argument("--model", default="Gan", type=str)
     parser.add_argument("--drop", default=0.5, type=float)
+    parser.add_argument("--lr", type=float, default=1e-4, help="adam: learning rate")
+    parser.add_argument("--b1", type=float, default=0.5, help="adam: decay of first order momentum of gradient")
+    parser.add_argument("--b2", type=float, default=0.999, help="adam: decay of first order momentum of gradient")
+    
     args = parser.parse_args()
 
     time_string = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
+    
     root_folder = os.path.join(args.savedir, "{}_{}_nocolor{}_drop{}_{}".format(
             args.model, args.npoints, args.nocolor, args.drop, time_string))
 
     filelist_train=[
-        # "bildstein_station1_xyz_intensity_rgb_voxels.npy",
-        # "bildstein_station3_xyz_intensity_rgb_voxels.npy",
-        # "domfountain_station1_xyz_intensity_rgb_voxels.npy",
-        # "domfountain_station3_xyz_intensity_rgb_voxels.npy",
-        # "neugasse_station1_xyz_intensity_rgb_voxels.npy",
-        # "sg27_station1_intensity_rgb_voxels.npy",
-        # "sg27_station5_intensity_rgb_voxels.npy",
-        # "untermaederbrunnen_station1_xyz_intensity_rgb_voxels.npy",
-        'mls2016_8class_20cm_ascii_area1_1_voxels.npy',
+        "mls2016_8class_20cm_ascii_area1_1_voxels.npy",
+
     ]
+    filelist_train_trans=[
+        "bildstein_station1_xyz_intensity_rgb_voxels.npy",
+        "bildstein_station3_xyz_intensity_rgb_voxels.npy",
+        "domfountain_station1_xyz_intensity_rgb_voxels.npy",
+        "domfountain_station3_xyz_intensity_rgb_voxels.npy",
+        "neugasse_station1_xyz_intensity_rgb_voxels.npy",
+        "sg27_station1_intensity_rgb_voxels.npy",
+        "sg27_station2_intensity_rgb_voxels.npy",
+        "untermaederbrunnen_station1_xyz_intensity_rgb_voxels.npy",
+    ]
+    
 
     filelist_val=[
-        # "bildstein_station5_xyz_intensity_rgb_voxels.npy",
-        # "domfountain_station2_xyz_intensity_rgb_voxels.npy",
-        # "sg27_station4_intensity_rgb_voxels.npy",
-        # "sg27_station2_intensity_rgb_voxels.npy",
-        # "sg27_station9_intensity_rgb_voxels.npy",
-        # "sg28_station4_intensity_rgb_voxels.npy",
-        # "untermaederbrunnen_station3_xyz_intensity_rgb_voxels.npy",
-        # 'mls2016_8class_20cm_ascii_area1_1_2_voxels.npy',
-        'mls2016_8class_20cm_ascii_area1_2_voxels.npy',
+        #"area3_voxels.npy",
+        "mls2016_8class_20cm_ascii_area1_1_voxels.npy",
         "mls2016_8class_20cm_ascii_area2_voxels.npy",
-        'mls2016_8class_20cm_ascii_area3_voxels.npy',
+        "mls2016_8class_20cm_ascii_area3_voxels.npy",
+        #"mls2016_8class_20cm_ascii_area1_voxels.npy",
     ]
-
-    filelist_test = [
-        # "area2_voxels.npy",
-        # "area3_voxels.npy",
-        'mls2016_8class_20cm_ascii_area1_1_2_voxels.npy',
-        # 'mls2016_8class_20cm_ascii_area1_2_voxels.npy',
-        # "mls2016_8class_20cm_ascii_area2_voxels.npy",
-        # 'mls2016_8class_20cm_ascii_area3_voxels.npy',
-
-        # "bildstein_station1_xyz_intensity_rgb_voxels.npy",
-        # "bildstein_station3_xyz_intensity_rgb_voxels.npy",
-        # "domfountain_station1_xyz_intensity_rgb_voxels.npy",
-        # "domfountain_station3_xyz_intensity_rgb_voxels.npy",
-        # "neugasse_station1_xyz_intensity_rgb_voxels.npy",
-        # "sg27_station1_intensity_rgb_voxels.npy",
-        # "sg27_station5_intensity_rgb_voxels.npy",
-        # "untermaederbrunnen_station1_xyz_intensity_rgb_voxels.npy",
-        # "bildstein_station5_xyz_intensity_rgb_voxels.npy",
-        # "domfountain_station2_xyz_intensity_rgb_voxels.npy",
-        # "sg27_station4_intensity_rgb_voxels.npy",
-        # "sg27_station2_intensity_rgb_voxels.npy",
-        # "sg27_station9_intensity_rgb_voxels.npy",
-        # "sg28_station4_intensity_rgb_voxels.npy",
-        # "untermaederbrunnen_station3_xyz_intensity_rgb_voxels.npy",
-        ]
-    N_CLASSES = 8
-    print(filelist_train)
+    print(filelist_train,filelist_train_trans)
     print(filelist_val)
+
+    N_CLASSES= 8
+
+    print(args.model)
     # create model
     print("Creating the network...", end="", flush=True)
     if args.nocolor:
-        net = get_model(args.model, input_channels=1, output_channels=N_CLASSES, args=args)
+        tumGen, dis = get_model(args.model, input_channels=1, output_channels=N_CLASSES, args=args)
+        semGen, _ = get_model(args.model, input_channels=1, output_channels=N_CLASSES, args=args)
     else:
-        net = get_model(args.model, input_channels=3, output_channels=N_CLASSES, args=args)
-    if args.continuetrain:
-        net.load_state_dict(torch.load(os.path.join(args.savedir, "state_dict.pth")))
-        print("continue train")
+        tumGen, dis = get_model(args.model, input_channels=3, output_channels=N_CLASSES, args=args)
+        semGen, _ = get_model(args.model, input_channels=3, output_channels=N_CLASSES, args=args)
     if args.test:
-        print("reload models")
-        net.load_state_dict(torch.load(os.path.join(args.savedir, "state_dict.pth")))
-    net.cuda()
+        tumGen.load_state_dict(torch.load(os.path.join(args.savedir, "tumGen_state_dict.pth")))
+        semGen.load_state_dict(torch.load(os.path.join(args.savedir, "semGen_state_dict.pth")))
+        dis.load_state_dict(torch.load(os.path.join(args.savedir, "dis_state_dict.pth")))
+
+    if args.finetuning: # continuetrain
+        # tumGen.load_state_dict(torch.load(os.path.join(args.savedir, "tumGen_state_dict.pth")))
+        # semGen.load_state_dict(torch.load(os.path.join(args.savedir, "semGen_state_dict.pth")))
+        # dis.load_state_dict(torch.load(os.path.join(args.savedir, "dis_state_dict.pth")))
+        print("reload pretrained semantic3D and TUM nocolor model")
+    
+        # ---------------------
+        #  Load pretrained model
+        # --------------------
+        semantic3D_model_path = "/media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/SegSmall_8192_nocolorTrue_drop0.5_2022-06-12-23-54-20/"
+        tum_model_path = "/media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/SegSmall_8192_nocolorTrue_drop0.5_2022-06-06-22-30-46/"
+
+        semantic3D_model_dict = torch.load(os.path.join(semantic3D_model_path, "state_dict.pth"))
+        tum_model_dict = torch.load(os.path.join(tum_model_path, "state_dict.pth"))
+
+        tumGen_dict = tumGen.state_dict()
+        semGen_dict = semGen.state_dict()
+        print(tumGen_dict.keys())
+        print("sem",semantic3D_model_dict["cv4.l2.bias"])
+        print("tum",tum_model_dict["cv4.l2.bias"])
+        # for k, v in tum_model_dict.items():
+        #     if k in tumGen_dict:
+        #         print(k)
+        # 1. filter out unnecessary keys
+        tum_dict_gen = {k: v for k, v in tum_model_dict.items() if k in tumGen_dict}
+        sem_dict_gen = {k: v for k, v in semantic3D_model_dict.items() if k in semGen_dict}
+        # 2. overwrite entries in the existing state dict
+        tumGen_dict.update(tum_dict_gen)
+        semGen_dict.update(sem_dict_gen)
+        tumGen.load_state_dict(tumGen_dict)
+        semGen.load_state_dict(semGen_dict)
+        print("sem",semGen_dict["cv4.l2.bias"])
+        print("tum",tumGen_dict["cv4.l2.bias"])
+        print("tum data from pretrained to extract")
+        # tumGen.load_state_dict(tumGen_dict)
+
+        print("start load dis model")
+
+        dis_dict = dis.state_dict()
+        print("dis",dis_dict.keys())
+        print("dis",dis_dict["bn3d.bias"])
+        # for k, v in tum_model_dict.items():
+        #     if k in dis_dict:
+        #         print(k)
+        # 1. filter out unnecessary keys
+        dis_dict_gan = {k: v for k, v in tum_model_dict.items() if k in dis_dict}
+        # 2. overwrite entries in the existing state dict
+        dis_dict.update(dis_dict_gan)
+        dis.load_state_dict(dis_dict)
+        
+        print("dis",dis_dict["bn3d.bias"])
+        print("load pretrained models")
+
+
+    tumGen.cuda()
+    semGen.cuda()
+    dis.cuda()
     print("Done")
+    print("discriminator output 1 class(Linear)")
+    print("Gan Model")
+
+    # log
+    # log = logging.getLogger(__name__)
+    # log.setLevel(logging.INFO)
+    # log.addHandler(TqdmLoggingHandler())
 
     ##### TRAIN
     if not args.test:
-
-
         print("Create the datasets...", end="", flush=True)
 
         ds = PartDataset(filelist_train, args.rootdir,
                                 training=True, block_size=args.block_size,
+                                iteration_number=args.batch_size*args.iter,  #16000
+                                npoints=args.npoints,
+                                nocolor=args.nocolor,
+                                transfer=False)
+
+        ds_transfer = PartDataset(filelist_train_trans, args.rootdir,
+                                training=True, block_size=args.block_size,
                                 iteration_number=args.batch_size*args.iter,
                                 npoints=args.npoints,
-                                nocolor=args.nocolor)
+                                nocolor=args.nocolor,
+                                transfer=True)
+        
         train_loader = torch.utils.data.DataLoader(ds, batch_size=args.batch_size, shuffle=True,
+                                            num_workers=args.threads)
+
+        train_trans_loader = torch.utils.data.DataLoader(ds_transfer, batch_size=args.batch_size, shuffle=True,
                                             num_workers=args.threads)
 
         val = PartDataset(filelist_val, args.rootdir,
                                 training=True, block_size=args.block_size,
                                 iteration_number=args.batch_size*args.iter,
                                 npoints=args.npoints,
-                                nocolor=args.nocolor)
+                                nocolor=args.nocolor,
+                                transfer=True)
         val_loader = torch.utils.data.DataLoader(val, batch_size=args.batch_size, shuffle=True,
                                             num_workers=args.threads)
         print("Done")
 
-
         print("Create optimizer...", end="", flush=True)
-        optimizer = torch.optim.Adam(net.parameters(), lr=1e-3)
+        optimizer_tumGen = torch.optim.Adam(tumGen.parameters(), lr=args.lr) # , betas=(args.b1, args.b2)
+
+        optimizer_semGen = torch.optim.Adam(itertools.chain(semGen.parameters(), dis.parameters()), lr=args.lr)
+        
         print("Done")
         
         # create the root folder
@@ -354,40 +446,98 @@ def main():
         
         # create the log file
         logs = open(os.path.join(root_folder, "log.txt"), "w")
-        logs.write("training with 10% tum")
-        logs.write("continue train")
-        logs.write("learning rate 1e-3")
+        logs.write("Continue Train")
+        logs.write(str(tumGen))
         logs.flush()
         logs.write(str(filelist_train))
         logs.write(str(filelist_val))
-        
-        logs.write(str(optimizer))
         logs.flush()
-
+        logs.write(str(optimizer_tumGen))
+        logs.flush()
+        logs.write(str(optimizer_semGen))
+        logs.flush()
+        logs.write("with seg trans loss in Gen, no seg loss in GAN, trans gan")
+        logs.flush()
+        print("with seg trans loss in Gen, no seg loss in GAN, trans gan")
         best_iou = 0.0
         # iterate over epochs
+
         for epoch in range(args.epochs):
 
             #######
             # training
-            net.train()
+            semGen.train()
+            dis.train()
+            tumGen.train()
 
             train_loss = 0
-            cm = np.zeros((N_CLASSES, N_CLASSES))
-            t = tqdm(train_loader, ncols=100, desc="Epoch {}".format(epoch))
-            
-            for pts, features, seg in t:
+            val_loss = 0
 
-                features = features.cuda()
-                pts = pts.cuda()
+            cm = np.zeros((N_CLASSES, N_CLASSES))
+            t = tqdm(zip(train_loader,train_trans_loader), ncols=100, desc="Epoch {}".format(epoch))
+
+            for (pts, features, seg ),(pts_trans, features_trans, seg_trans) in t:
+
+                features_trans = features_trans.cuda() # n*3
+                pts_trans = pts_trans.cuda()  # n*3
+                seg_trans = seg_trans.cuda()
+
+                features = features.cuda() # n*3
+                pts = pts.cuda()  # n*3
                 seg = seg.cuda()
+                # ---------------------
+                #  Train Generate Semantic3D
+                # --------------------
+
+                # clabel_trans = clabel_trans.cuda()
+                optimizer_tumGen.zero_grad()
                 
-                optimizer.zero_grad()
-                outputs = net(features, pts)
-                loss =  F.cross_entropy(outputs.view(-1, N_CLASSES), seg.view(-1))
-                loss.backward()
-                optimizer.step()
+                x6_t, pts6_t, x5_t, pts5_t, x4_t, pts4_t, x3_t, pts3_t, x2_t, pts2_t = tumGen(features, pts)
+                outputs, class_out = dis(features, pts,x6_t, pts6_t, x5_t, pts5_t, x4_t, pts4_t, x3_t, pts3_t, x2_t, pts2_t)
+                #discriminator_loss = F.cross_entropy(class_out.view(-1, 2), clabel.view(-1)) # when output linear 2 node
+                #discriminator_loss = F.binary_cross_entropy_with_logits(class_out.view(-1), clabel.view(-1))  # when output 1 node
                 
+                clabel_false = torch.from_numpy(np.zeros(class_out.shape)).float().cuda()
+                #discriminator_loss_trans = F.cross_entropy(class_out_trans.view(-1, 2), clabel_trans.view(-1)) # when output linear 2 node
+                #discriminator_loss_trans = F.binary_cross_entropy_with_logits(class_out_trans.view(-1), clabel_trans.view(-1))
+                discriminator_loss = torch.nn.MSELoss()(class_out.view(-1),clabel_false.view(-1))
+                seg_loss = F.cross_entropy(outputs.view(-1, N_CLASSES), seg.view(-1))
+                
+                # loss = seg_loss+discriminator_loss                
+                loss_gen = discriminator_loss+seg_loss
+                loss_gen.backward()
+                optimizer_tumGen.step()
+                
+                # ---------------------
+                #  Train GAN TUMMLS
+                # --------------------
+
+                #clabel = clabel.cuda()
+
+                optimizer_tumGen.zero_grad()
+                x6_t, pts6_t, x5_t, pts5_t, x4_t, pts4_t, x3_t, pts3_t, x2_t, pts2_t = tumGen(features, pts)
+                outputs, class_out = dis(features, pts,x6_t, pts6_t, x5_t, pts5_t, x4_t, pts4_t, x3_t, pts3_t, x2_t, pts2_t)
+                #discriminator_loss = F.cross_entropy(class_out.view(-1, 2), clabel.view(-1)) # when output linear 2 node
+                #discriminator_loss = F.binary_cross_entropy_with_logits(class_out.view(-1), clabel.view(-1))  # when output 1 node
+                x6_f, pts6_f, x5_f, pts5_f, x4_f, pts4_f, x3_f, pts3_f, x2_f, pts2_f = semGen(features_trans, pts_trans)
+                outputs_trans, class_out_trans = dis(features_trans, pts_trans, x6_f, pts6_f, x5_f, pts5_f, x4_f, pts4_f, x3_f, pts3_f, x2_f, pts2_f)
+                
+                clabel_false = torch.from_numpy(np.zeros(class_out_trans.shape)).float().cuda()
+                clabel_true = torch.from_numpy(np.ones(class_out.shape)).float().cuda()
+
+                discriminator_loss = torch.nn.MSELoss()(class_out.view(-1),clabel_true.view(-1))
+                discriminator_loss_trans = torch.nn.MSELoss()(class_out_trans.view(-1),clabel_false.view(-1))
+                # discriminator_loss.backward()
+                seg_loss = F.cross_entropy(outputs.view(-1, N_CLASSES), seg.view(-1))
+                seg_loss_trans = F.cross_entropy(outputs_trans.view(-1, N_CLASSES), seg_trans.view(-1))
+
+                loss_gan = (seg_loss+seg_loss_trans+discriminator_loss+discriminator_loss_trans)
+                loss_gan.backward()
+                optimizer_tumGen.step()
+                
+                ## class label
+                b_size = class_out.size(0)
+
                 output_np = np.argmax(outputs.cpu().detach().numpy(), axis=2).copy()
                 target_np = seg.cpu().numpy().copy()   # (16, 8192)
 
@@ -398,35 +548,37 @@ def main():
                 aa = f"{metrics.stats_accuracy_per_class(cm)[0]:.5f}"
                 iou = f"{metrics.stats_iou_per_class(cm)[0]:.5f}"
 
-                train_loss += loss.detach().cpu().item()
-
-                t.set_postfix(OA=wblue(oa), AA=wblue(aa), IOU=wblue(iou), LOSS=wblue(f"{train_loss/cm.sum():.4e}"))
-
+                train_loss += loss_gan.detach().cpu().item()
+                #trans_loss += loss_t.detach().cpu().item()
+                
+                t.set_postfix(OA=wblue(oa), AA=wblue(aa), IOU=wblue(iou), Train_LOSS=wblue(f"{train_loss/cm.sum():.4e}"))
 
             # write the logs
             logs.write(f"{epoch} {oa} {aa} {iou}\n")
             logs.flush()
 
-            if epoch%2==0:
-                net.eval()
+            if epoch%5==0:
+
+                tumGen.eval()
+                dis.eval()
+
                 with torch.no_grad(): 
-                    
-                    cm  = np.zeros((N_CLASSES, N_CLASSES))
+          
+                    cm = np.zeros((N_CLASSES, N_CLASSES))
                     t = tqdm(val_loader, ncols=100, desc="Epoch {}".format(epoch))
-                    val_loss = 0
+                    
                     for pts, features, seg in t:
 
                         features = features.cuda()
                         pts = pts.cuda()
                         seg = seg.cuda()
 
-                        outputs = net(features, pts)
-
-                        loss =  F.cross_entropy(outputs.view(-1, N_CLASSES), seg.view(-1))
-                        val_loss += loss.detach().cpu().item()
+                        x6_t, pts6_t, x5_t, pts5_t, x4_t, pts4_t, x3_t, pts3_t, x2_t, pts2_t = tumGen(features, pts)
+                        outputs, _ = dis(features, pts,x6_t, pts6_t, x5_t, pts5_t, x4_t, pts4_t, x3_t, pts3_t, x2_t, pts2_t)
 
                         output_np = np.argmax(outputs.cpu().detach().numpy(), axis=2).copy()
                         target_np = seg.cpu().numpy().copy()   # (16, 8192)
+
                         cm_ = confusion_matrix(target_np.ravel(), output_np.ravel(), labels=list(range(N_CLASSES)))
                         cm += cm_
 
@@ -434,24 +586,31 @@ def main():
                         aa = f"{metrics.stats_accuracy_per_class(cm)[0]:.5f}"
                         iou = f"{metrics.stats_iou_per_class(cm)[0]:.5f}"
 
-                        t.set_postfix(OA=wblue(oa), AA=wblue(aa), IOU=wblue(iou), LOSS=wblue(f"{val_loss/cm.sum():.4e}"))
                         iouf = metrics.stats_iou_per_class(cm)[0]          
+
+                        loss =  F.cross_entropy(outputs.view(-1, N_CLASSES), seg.view(-1))
+                        val_loss += loss.detach().cpu().item()
+
+                        t.set_postfix(OA=wblue(oa), AA=wblue(aa), IOU=wblue(iou), LOSS=wblue(f"{val_loss/cm.sum():.4e}"))
 
                     if iouf>best_iou:
                         best_iou = iouf
                         # save the model
-                        print("when iou equals ",iou)
-                        torch.save(net.state_dict(), os.path.join(root_folder, "state_dict.pth"))
-                    logs.write(f"{epoch} {oa} {aa} {iou}\n")
+                        print("when iou equals ",iou,"save at",os.path.join(root_folder, "state_dict.pth"))
+                        torch.save(tumGen.state_dict(), os.path.join(root_folder, "tumGen_state_dict.pth"))
+                        torch.save(dis.state_dict(), os.path.join(root_folder, "dis_state_dict.pth"))
+                        torch.save(semGen.state_dict(), os.path.join(root_folder, "semGen_state_dict.pth"))
+
+                        
+                    logs.write(f"{epoch} {oa} {aa} {iou} {val_loss}\n")
                     logs.flush()
-                    
         logs.close()
 
     ##### TEST
     else:
         net.eval()
         for filename in filelist_test:
-            print(filename)
+            # print(filename)
             ds = PartDatasetTest(filename, args.rootdir,
                             block_size=args.block_size,
                             npoints= args.npoints,
@@ -466,13 +625,14 @@ def main():
             scores = np.zeros((xyzrgb.shape[0], N_CLASSES))
             with torch.no_grad():
                 t = tqdm(loader, ncols=100)
-                for pts, features, indices in t:
+                for pts, features, indices,_ in t:
                     
                     features = features.cuda()
                     #print(features)
                     #print(pts)
                     pts = pts.cuda()
-                    outputs = net(features, pts)
+                    outputs,_ = net(features, pts)
+                    # print(outputs)
                     outputs_np = outputs.cpu().numpy().reshape((-1, N_CLASSES))
                     
                     scores[indices.cpu().numpy().ravel()] += outputs_np

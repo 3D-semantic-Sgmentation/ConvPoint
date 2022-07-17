@@ -222,10 +222,10 @@ class PartDatasetTest():
 def get_model(model_name, input_channels, output_channels, args):
     if model_name == "SegBig":
         from networks.network_seg import SegBig as Net
-        print("SegBig")
         return Net(input_channels, output_channels, args=args)
     else:
-        from networks.network_seg import SegSmall as Net
+        from networks.network_seg import SegVerySmall as Net
+        print("loaded very small net")
         return Net(input_channels, output_channels)
 
 
@@ -245,7 +245,7 @@ def main():
     parser.add_argument("--continuetrain", action="store_true")
     parser.add_argument("--savepts", action="store_true")
     parser.add_argument("--test_step", default=0.8, type=float)
-    parser.add_argument("--model", default="SegBig", type=str)
+    parser.add_argument("--model", default="SegVerySmall", type=str)
     parser.add_argument("--drop", default=0.5, type=float)
     args = parser.parse_args()
 
@@ -273,7 +273,6 @@ def main():
         # "sg27_station9_intensity_rgb_voxels.npy",
         # "sg28_station4_intensity_rgb_voxels.npy",
         # "untermaederbrunnen_station3_xyz_intensity_rgb_voxels.npy",
-        # 'mls2016_8class_20cm_ascii_area1_1_2_voxels.npy',
         'mls2016_8class_20cm_ascii_area1_2_voxels.npy',
         "mls2016_8class_20cm_ascii_area2_voxels.npy",
         'mls2016_8class_20cm_ascii_area3_voxels.npy',
@@ -282,27 +281,12 @@ def main():
     filelist_test = [
         # "area2_voxels.npy",
         # "area3_voxels.npy",
-        'mls2016_8class_20cm_ascii_area1_1_2_voxels.npy',
+        # 'mls2016_8class_20cm_ascii_area1_1_2_voxels.npy',
         # 'mls2016_8class_20cm_ascii_area1_2_voxels.npy',
         # "mls2016_8class_20cm_ascii_area2_voxels.npy",
         # 'mls2016_8class_20cm_ascii_area3_voxels.npy',
-
-        # "bildstein_station1_xyz_intensity_rgb_voxels.npy",
-        # "bildstein_station3_xyz_intensity_rgb_voxels.npy",
-        # "domfountain_station1_xyz_intensity_rgb_voxels.npy",
-        # "domfountain_station3_xyz_intensity_rgb_voxels.npy",
-        # "neugasse_station1_xyz_intensity_rgb_voxels.npy",
-        # "sg27_station1_intensity_rgb_voxels.npy",
-        # "sg27_station5_intensity_rgb_voxels.npy",
-        # "untermaederbrunnen_station1_xyz_intensity_rgb_voxels.npy",
-        # "bildstein_station5_xyz_intensity_rgb_voxels.npy",
-        # "domfountain_station2_xyz_intensity_rgb_voxels.npy",
-        # "sg27_station4_intensity_rgb_voxels.npy",
-        # "sg27_station2_intensity_rgb_voxels.npy",
-        # "sg27_station9_intensity_rgb_voxels.npy",
-        # "sg28_station4_intensity_rgb_voxels.npy",
-        # "untermaederbrunnen_station3_xyz_intensity_rgb_voxels.npy",
         ]
+
     N_CLASSES = 8
     print(filelist_train)
     print(filelist_val)
@@ -321,6 +305,12 @@ def main():
     net.cuda()
     print("Done")
 
+
+    layers = []
+    for name, param in net.named_parameters():
+        print(name,param.requires_grad)
+        layers.append([name,param.requires_grad])
+        
     ##### TRAIN
     if not args.test:
 
@@ -358,9 +348,9 @@ def main():
         logs.write("continue train")
         logs.write("learning rate 1e-3")
         logs.flush()
+        logs.write(str(layers))
         logs.write(str(filelist_train))
         logs.write(str(filelist_val))
-        
         logs.write(str(optimizer))
         logs.flush()
 
@@ -403,11 +393,12 @@ def main():
                 t.set_postfix(OA=wblue(oa), AA=wblue(aa), IOU=wblue(iou), LOSS=wblue(f"{train_loss/cm.sum():.4e}"))
 
 
+
             # write the logs
             logs.write(f"{epoch} {oa} {aa} {iou}\n")
             logs.flush()
 
-            if epoch%2==0:
+            if epoch%5==0:
                 net.eval()
                 with torch.no_grad(): 
                     
