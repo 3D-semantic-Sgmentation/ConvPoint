@@ -272,7 +272,7 @@ def main():
     parser.add_argument('--block_size', help='Block size', type=float, default=4)
     parser.add_argument("--epochs", type=int, default=500)
     parser.add_argument("--batch_size", "-b", type=int, default=4)
-    parser.add_argument("--iter", "-i", type=int, default=1200)
+    parser.add_argument("--iter", "-i", type=int, default=2)
     parser.add_argument("--npoints", "-n", type=int, default=8192)
     parser.add_argument("--threads", type=int, default=2)
     parser.add_argument("--nocolor",default=True)
@@ -283,7 +283,7 @@ def main():
     parser.add_argument("--test_step", default=0.8, type=float)
     parser.add_argument("--model", default="SegBig_GAN", type=str)
     parser.add_argument("--drop", default=0.5, type=float)
-    parser.add_argument("--lr", type=float, default=1e-4, help="adam: learning rate")
+    parser.add_argument("--lr", type=float, default=1e-5, help="adam: learning rate")
     parser.add_argument("--b1", type=float, default=0.5, help="adam: decay of first order momentum of gradient")
     parser.add_argument("--b2", type=float, default=0.999, help="adam: decay of first order momentum of gradient")
     
@@ -295,8 +295,9 @@ def main():
             args.model, args.npoints, args.nocolor, args.drop, time_string))
 
     filelist_train=[
-        "mls2016_8class_20cm_ascii_area1_1_1_voxels.npy",
-
+        "mls2016_8class_20cm_ascii_area1_voxels.npy",
+        "mls2016_8class_20cm_ascii_area2_voxels.npy",
+        "mls2016_8class_20cm_ascii_area3_voxels.npy",
     ]
     filelist_train_trans=[
         "bildstein_station1_xyz_intensity_rgb_voxels.npy",
@@ -319,14 +320,14 @@ def main():
 
     filelist_val=[
         #"area3_voxels.npy",
-        "mls2016_8class_20cm_ascii_area1_2_voxels.npy",
+        "mls2016_8class_20cm_ascii_area1_voxels.npy",
         "mls2016_8class_20cm_ascii_area2_voxels.npy",
         "mls2016_8class_20cm_ascii_area3_voxels.npy",
         #"mls2016_8class_20cm_ascii_area1_voxels.npy",
     ]
     filelist_test=[
         #"area3_voxels.npy",
-        "mls2016_8class_20cm_ascii_area1_2_voxels.npy",
+        "mls2016_8class_20cm_ascii_area1_voxels.npy",
         "mls2016_8class_20cm_ascii_area2_voxels.npy",
         "mls2016_8class_20cm_ascii_area3_voxels.npy",
         #"mls2016_8class_20cm_ascii_area1_voxels.npy",
@@ -340,21 +341,17 @@ def main():
     # create model
     print("Creating the network...", end="", flush=True)
     if args.nocolor:
-        FGNet, dis1 = get_model(args.model, input_channels=1, output_channels=N_CLASSES, args=args)
-        _,dis2 = get_model(args.model, input_channels=1, output_channels=N_CLASSES, args=args)
+        FGNet, dis = get_model(args.model, input_channels=1, output_channels=N_CLASSES, args=args)
     else:
-        FGNet, dis1 = get_model(args.model, input_channels=3, output_channels=N_CLASSES, args=args)
-        _, dis2= get_model(args.model, input_channels=3, output_channels=N_CLASSES, args=args)
+        FGNet, dis = get_model(args.model, input_channels=3, output_channels=N_CLASSES, args=args)
 
     if args.test:
         FGNet.load_state_dict(torch.load(os.path.join(args.savedir, "FGNet_state_dict.pth")))
-        dis1.load_state_dict(torch.load(os.path.join(args.savedir, "dis1_state_dict.pth")))
-        dis2.load_state_dict(torch.load(os.path.join(args.savedir, "dis2_state_dict.pth")))
+        dis.load_state_dict(torch.load(os.path.join(args.savedir, "dis_state_dict.pth")))
 
     if args.continuetrain:
         FGNet.load_state_dict(torch.load(os.path.join(args.savedir, "FGNet_state_dict.pth")))
-        dis1.load_state_dict(torch.load(os.path.join(args.savedir, "dis1_state_dict.pth")))
-        dis2.load_state_dict(torch.load(os.path.join(args.savedir, "dis2_state_dict.pth")))
+        dis.load_state_dict(torch.load(os.path.join(args.savedir, "dis_state_dict.pth")))
     if args.finetuning:
         # ---------------------
         #  Load pretrained model
@@ -373,7 +370,7 @@ def main():
         FGNet.load_state_dict(FGNet_dict)
         print("start load dis model")
 
-        dis_dict = dis1.state_dict()
+        dis_dict = dis.state_dict()
         for k, v in pretrained_dict.items():
             if k in dis_dict:
                 print(k)
@@ -381,13 +378,13 @@ def main():
         pretrained_dict_gan = {k: v for k, v in pretrained_dict.items() if k in dis_dict}
         # 2. overwrite entries in the existing state dict
         dis_dict.update(pretrained_dict_gan)
-        dis1.load_state_dict(dis_dict)
+        dis.load_state_dict(dis_dict)
         #dis2.load_state_dict(dis_dict)
         print("load pretrained models")
         
     FGNet.cuda()
-    dis1.cuda()
-    dis2.cuda()
+    dis.cuda()
+
     print("Done")
     print("discriminator output 1 class(Linear)")
     print("Gan Model")
@@ -431,10 +428,10 @@ def main():
         print("Create optimizer...", end="", flush=True)
         optimizer_FGNet = torch.optim.Adam(FGNet.parameters(), lr=args.lr)
         
-        optimizer_dis = torch.optim.Adam(itertools.chain(dis1.parameters(), dis2.parameters()), lr=args.lr)  # Discriminator use large learning rate
+        optimizer_dis = torch.optim.Adam(dis.parameters(), lr=args.lr)  # Discriminator use large learning rate
 
         # scheduler_FGNet = lr_scheduler.CosineAnnealingLR(optimizer_FGNet, T_max=30, eta_min=1e-5)
-        scheduler_dis = lr_scheduler.StepLR(optimizer_dis, 100, gamma=0.5, last_epoch=-1)
+        # scheduler_dis = lr_scheduler.StepLR(optimizer_dis, 100, gamma=0.5, last_epoch=-1)
         print("Done")
         
         # update all para in one optimize is not good
@@ -461,8 +458,7 @@ def main():
             #######
             # training
             FGNet.train()
-            dis1.train()
-            dis2.train()
+            dis.train()
 
             train_loss = 0
             adv_losses = 0
@@ -487,9 +483,7 @@ def main():
                 optimizer_dis.zero_grad()
 
                 point_features_trans = FGNet(features_trans, pts_trans)
-                outputs_trans_1, _ =dis1(features_trans, point_features_trans)
-                outputs_trans_2, _ = dis2(features_trans, point_features_trans)
-
+                outputs_trans_1, outputs_trans_2 = dis(features_trans, point_features_trans)
 
                 seg_loss_trans_1 = F.cross_entropy(outputs_trans_1.view(-1, N_CLASSES), seg_trans.view(-1))
                 seg_loss_trans_2 = F.cross_entropy(outputs_trans_2.view(-1, N_CLASSES), seg_trans.view(-1))
@@ -508,12 +502,10 @@ def main():
                 optimizer_FGNet.zero_grad()
 
                 point_features = FGNet(features, pts)
-                outputs_1, _ = dis1(features, point_features)
-                outputs_2, _ = dis2(features, point_features)
+                outputs_1, outputs_2 = dis(features, point_features)
                 
                 point_features_trans = FGNet(features_trans, pts_trans)
-                outputs_trans_1, _ =dis1(features_trans, point_features_trans)
-                outputs_trans_2, _ = dis2(features_trans, point_features_trans)
+                outputs_trans_1, outputs_trans_2 = dis(features_trans, point_features_trans)
 
                 seg_loss_1 = F.cross_entropy(outputs_trans_1.view(-1, N_CLASSES), seg_trans.view(-1))
                 seg_loss_2 = F.cross_entropy(outputs_trans_2.view(-1, N_CLASSES), seg_trans.view(-1))
@@ -521,7 +513,7 @@ def main():
                 
                 adv_loss = F.l1_loss(outputs_1, outputs_2)
 
-                loss_gan = seg_loss_1 + seg_loss_2 + 0.1*adv_loss
+                loss_gan = seg_loss_1 + seg_loss_2 + 0.001*adv_loss
                 loss_gan.backward()
                 optimizer_FGNet.step()
 
@@ -550,11 +542,12 @@ def main():
             logs.write(f"{epoch} {oa} {aa} {iou}\n")
             logs.flush()
 
+            draw_features(point_features_trans.cpu(), outputs.cpu(), title =str(epoch))
+
             if epoch%2==0:
 
                 FGNet.eval()
-                dis1.eval()
-                dis2.eval()
+                dis.eval()
 
                 with torch.no_grad(): 
           
@@ -568,8 +561,7 @@ def main():
                         seg = seg.cuda()
 
                         point_features = FGNet(features, pts)
-                        outputs_1, class_out_1 = dis1(features, point_features)
-                        outputs_2, class_out_2 = dis2(features, point_features)
+                        outputs_1, outputs_2 = dis(features, point_features)
 
                         outputs = torch.add(outputs_1, outputs_2)/2
                         output_np = np.argmax(outputs.cpu().detach().numpy(), axis=2).copy()
@@ -597,8 +589,7 @@ def main():
                         # save the model
                         print("when iou equals ",iou,"save at",os.path.join(root_folder, "state_dict.pth"))
                         torch.save(FGNet.state_dict(), os.path.join(root_folder, "FGNet_state_dict.pth"))
-                        torch.save(dis1.state_dict(), os.path.join(root_folder, "dis1_state_dict.pth"))
-                        torch.save(dis2.state_dict(), os.path.join(root_folder, "dis2_state_dict.pth"))
+                        torch.save(dis.state_dict(), os.path.join(root_folder, "dis_state_dict.pth"))
 
                         
                     logs.write(f"{epoch} {oa} {aa} {iou} {val_loss}\n")
@@ -614,8 +605,7 @@ def main():
         # semGen.eval()
 
         FGNet.eval()
-        dis1.eval()
-        dis2.eval()
+        dis.eval()
 
         for filename in filelist_test:
             print(filename)
@@ -641,8 +631,7 @@ def main():
                     pts = pts.cuda()
 
                     point_features = FGNet(features, pts)
-                    outputs_1, class_out_1 = dis1(features, point_features)
-                    outputs_2, class_out_2 = dis2(features, point_features)
+                    outputs_1, outputs_2 = dis(features, point_features)
 
                     # outputs,_ = net(features, pts)
                     # print(outputs)

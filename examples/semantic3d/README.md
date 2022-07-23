@@ -58,7 +58,7 @@ update discriminator when semantic3D training; load pretrained model
 python semantic3d_seg_gan_reverse.py --rootdir /media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/train/pointcloud --savedir /media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/ --finetuning
 
 
-## Unsup version Gan
+## Unsup version unspu Gan
 python semantic3d_seg_gan_unsup.py --rootdir /media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/train/pointcloud --savedir /media/liangdao/DATA/segmentation/ConvPoint/data/SEMANTIC3D/SegBig_nocolor --finetuning
 
 

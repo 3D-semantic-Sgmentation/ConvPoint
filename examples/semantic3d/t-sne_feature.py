@@ -11,79 +11,52 @@ from mpl_toolkits.mplot3d import Axes3D
 import seaborn as sns
 
 
-mnist = fetch_openml("mnist_784")
-X = mnist.data[0:1000] / 255.0
-y = mnist.target[0:10000]
-print(X.shape, y.shape)
 
 
-feat_cols = [ 'pixel'+str(i) for i in range(1,X.shape[1]) ]
-df = pd.DataFrame(X,columns=feat_cols)
-print(df)
-df['y'] = y
+def draw_features(features, labels, title = "0"):
 
-df['label'] = df['y'].apply(lambda i: str(i))
-X, y = None, None
-print('Size of the dataframe: {}'.format(df.shape))
-print(df)
-np.random.seed(42)
-rndperm = np.random.permutation(df.shape[0])
-# pca = PCA(n_components=3)
-# pca_result = pca.fit_transform(df[feat_cols].values)
-# df['pca-one'] = pca_result[:,0]
-# df['pca-two'] = pca_result[:,1] 
-# df['pca-three'] = pca_result[:,2]
-# print('Explained variation per principal component: {}'.format(pca.explained_variance_ratio_))
+    tsne = TSNE(n_components=2).fit_transform(features)
+    colors_per_class = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+    def scale_to_01_range(x):
+        # compute the distribution range
+        value_range = (np.max(x) - np.min(x))
+        # move the distribution so that it starts from zero
+        # by extracting the minimal value from all its values
+        starts_from_zero = x - np.min(x)
 
-# plt.figure(figsize=(16,10))
-# sns.scatterplot(
-#     x="pca-one", y="pca-two",
-#     hue="y",
-#     palette=sns.color_palette("hls", 10),
-#     data=df.loc[rndperm,:],
-#     legend="full",
-#     alpha=0.3
-# )
+        # make the distribution fit [0; 1] by dividing by its range
 
-# ax = plt.figure(figsize=(16,10)).gca(projection='3d')
-# ax.scatter(
-#     xs=df.loc[rndperm,:]["pca-one"], 
-#     ys=df.loc[rndperm,:]["pca-two"], 
-#     zs=df.loc[rndperm,:]["pca-three"], 
-#     c=df.loc[rndperm,:]["y"], 
-#     cmap='tab10'
-# )
-# ax.set_xlabel('pca-one')
-# ax.set_ylabel('pca-two')
-# ax.set_zlabel('pca-three')
-# plt.show()
+        return starts_from_zero / value_range
 
-N = 1000
-df_subset = df.loc[rndperm[:N],:].copy()
-data_subset = df_subset[feat_cols].values
-print(data_subset)
-# pca = PCA(n_components=3)
-# pca_result = pca.fit_transform(data_subset)
-# df_subset['pca-one'] = pca_result[:,0]
-# df_subset['pca-two'] = pca_result[:,1] 
-# df_subset['pca-three'] = pca_result[:,2]
-# print('Explained variation per principal component: {}'.format(pca.explained_variance_ratio_))
+    # extract x and y coordinates representing the positions of the images on T-SNE plot
+    tx = tsne[:, 0]
+    ty = tsne[:, 1]
+    
+    tx = scale_to_01_range(tx)
+    ty = scale_to_01_range(ty)
 
-time_start = time.time()
-tsne = TSNE(n_components=2, verbose=1, perplexity=40, n_iter=300)
-tsne_results = tsne.fit_transform(data_subset)
-print('t-SNE done! Time elapsed: {} seconds'.format(time.time()-time_start))
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+        
+    # for every class, we'll add a scatter plot separately
+    for label in labels:
+        # find the samples of the current class in the data
+        indices = [i for i, l in enumerate(labels) if l == label]
 
-df_subset['tsne-2d-one'] = tsne_results[:,0]
-df_subset['tsne-2d-two'] = tsne_results[:,1]
-plt.figure(figsize=(16,10))
-sns.scatterplot(
-    x="tsne-2d-one", y="tsne-2d-two",
-    hue="y",
-    palette=sns.color_palette("hls", 10),
-    data=df_subset,
-    legend="full",
-    alpha=0.3
-)
-plt.show()
-sns.show()
+        # extract the coordinates of the points of this class only
+
+        current_tx = np.take(tx, indices)
+        current_ty = np.take(ty, indices)
+    
+        # convert the class color to matplotlib format
+        #color = np.array(colors_per_class[label], dtype=np.float) 
+    
+        # add a scatter plot with the corresponding color and label
+        ax.scatter(current_tx, current_ty, label=label)
+    
+    # build a legend using the labels we set previously
+    ax.legend(loc='best')
+    plt.title(title)
+
+    plt.show()
+

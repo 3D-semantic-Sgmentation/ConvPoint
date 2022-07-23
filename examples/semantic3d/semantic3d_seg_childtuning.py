@@ -323,9 +323,9 @@ def create_optimizer_and_scheduler(net,num_training_steps: int,learning_rate):
     print("number of training step",num_training_steps)
     
     lr_scheduler = get_scheduler(
-            "linear",
+            "cosine",
             optimizer,
-            num_warmup_steps=20,
+            num_warmup_steps=10,
             num_training_steps=num_training_steps,
         )
     return optimizer, lr_scheduler

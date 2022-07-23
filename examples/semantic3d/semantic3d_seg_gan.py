@@ -427,7 +427,7 @@ def main():
         print("Done")
 
         print("Create optimizer...", end="", flush=True)        
-        optimizer_dis = torch.optim.Adam(itertools.chain(dis1.parameters(), dis2.parameters()), lr=args.lr)  # Discriminator use large learning rate
+        optimizer_dis = torch.optim.Adam(itertools.chain(dis1.parameters(), dis2.parameters()), lr=args.lr*5)  # Discriminator use large learning rate
         optimizer_FGNet = torch.optim.Adam(FGNet.parameters(), lr=args.lr)  # Discriminator use large learning rate
         scheduler = lr_scheduler.StepLR(optimizer_dis, 80, gamma=0.1, last_epoch=-1)
 
@@ -451,6 +451,9 @@ def main():
         logs.flush()
 
         best_iou = 0.0
+
+        
+
         # iterate over epochs
         for epoch in range(args.epochs):
 
@@ -462,6 +465,7 @@ def main():
 
             train_loss = 0
             val_loss = 0
+            
 
             cm = np.zeros((N_CLASSES, N_CLASSES))
             t = tqdm(zip(train_loader,train_trans_loader), ncols=100, desc="Epoch {}".format(epoch))
@@ -499,7 +503,7 @@ def main():
                 
                 domain_loss = torch.nn.NLLLoss()(class_out.flatten(), clabel_true.long())
 
-                loss_dis = seg_loss_trans+domain_loss_trans+domain_loss 
+                loss_dis = seg_loss_trans+0.0001*(domain_loss_trans+domain_loss)
 
                 loss_dis.backward()
                 optimizer_dis.step()
@@ -512,25 +516,26 @@ def main():
                 point_features_trans = FGNet(features_trans, pts_trans)
                 outputs_trans = dis1(features_trans, point_features_trans)
 
-                # class_out_trans = dis2(features_trans, point_features_trans)
+                class_out_trans = dis2(features_trans, point_features_trans)
 
-                # clabel_true = torch.ones(class_out_trans.size(0)).cuda()
+                clabel_true = torch.ones(class_out_trans.size(0)).cuda()
 
                 seg_loss_trans = F.cross_entropy(outputs_trans.view(-1, N_CLASSES), seg_trans.view(-1))
-                # domain_loss_trans = torch.nn.NLLLoss()(class_out_trans.flatten(), clabel_true.long())
+                domain_loss_trans = torch.nn.NLLLoss()(class_out_trans.flatten(), clabel_true.long())
 
                 features = features.cuda() # n*3
                 pts = pts.cuda()  # n*3
                 seg = seg.cuda()
 
                 point_features = FGNet(features, pts)
-                # outputs = dis1(features, point_features)
+                
+                outputs = dis1(features, point_features)
                 class_out = dis2(features, point_features)
                 clabel_false = torch.zeros(class_out.size(0)).cuda()
                 domain_loss = torch.nn.NLLLoss()(class_out.flatten(), clabel_false.long())
 
 
-                loss_FGNet = seg_loss_trans+domain_loss
+                loss_FGNet = seg_loss_trans+0.0001*(domain_loss+domain_loss_trans)
                 loss_FGNet.backward()
                 optimizer_FGNet.step()
                 
@@ -547,7 +552,7 @@ def main():
                 aa = f"{metrics.stats_accuracy_per_class(cm)[0]:.5f}"
                 iou = f"{metrics.stats_iou_per_class(cm)[0]:.5f}"
 
-                train_loss += loss_gan.detach().cpu().item()
+                train_loss += loss_FGNet.detach().cpu().item()
                 #trans_loss += loss_t.detach().cpu().item()
                     
                 t.set_postfix(OA=wblue(oa), AA=wblue(aa), IOU=wblue(iou), Train_LOSS=wblue(f"{train_loss/cm.sum():.4e}"))
