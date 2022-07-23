@@ -368,17 +368,17 @@ def main():
         FGNet_dict.update(pretrained_dict_gen)
 
         FGNet.load_state_dict(FGNet_dict)
-        print("start load dis model")
+        # print("start load dis model")
 
-        dis_dict = dis.state_dict()
-        for k, v in pretrained_dict.items():
-            if k in dis_dict:
-                print(k)
-        # 1. filter out unnecessary keys
-        pretrained_dict_gan = {k: v for k, v in pretrained_dict.items() if k in dis_dict}
-        # 2. overwrite entries in the existing state dict
-        dis_dict.update(pretrained_dict_gan)
-        dis.load_state_dict(dis_dict)
+        # dis_dict = dis.state_dict()
+        # for k, v in pretrained_dict.items():
+        #     if k in dis_dict:
+        #         print(k)
+        # # 1. filter out unnecessary keys
+        # pretrained_dict_gan = {k: v for k, v in pretrained_dict.items() if k in dis_dict}
+        # # 2. overwrite entries in the existing state dict
+        # dis_dict.update(pretrained_dict_gan)
+        # dis.load_state_dict(dis_dict)
         #dis2.load_state_dict(dis_dict)
         print("load pretrained models")
         
