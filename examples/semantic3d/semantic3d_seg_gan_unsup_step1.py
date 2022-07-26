@@ -244,7 +244,7 @@ def get_model(model_name, input_channels, output_channels, args):
     elif model_name == "SegSmall":
         from networks.network_seg import SegSmall as Net
         return Net(input_channels, output_channels)
-    elif model_name == "SegBig_GAN":
+    elif model_name == "SegBig_GAN1":
         from networks.network_seg import SegBig_FG as FGNet
         from networks.network_seg import SegBig_Dis as DisNet
         return FGNet(input_channels, output_channels), DisNet(input_channels, output_channels)
@@ -271,7 +271,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--rootdir', '-s', help='Path to data folder')
     parser.add_argument("--savedir", type=str, default="./results")
-    parser.add_argument('--block_size', help='Block size', type=float, default=4)
+    parser.add_argument('--block_size', help='Block size', type=float, default=1)
     parser.add_argument("--epochs", type=int, default=600)
     parser.add_argument("--batch_size", "-b", type=int, default=8)
     parser.add_argument("--iter", "-i", type=int, default=1000)
@@ -283,7 +283,7 @@ def main():
     parser.add_argument("--continuetrain", action="store_true")
     parser.add_argument("--finetuning", action="store_true")
     parser.add_argument("--test_step", default=0.8, type=float)
-    parser.add_argument("--model", default="SegBig_GAN", type=str)
+    parser.add_argument("--model", default="SegBig_GAN1", type=str)
     parser.add_argument("--drop", default=0.5, type=float)
     parser.add_argument("--lr", type=float, default=1e-5, help="adam: learning rate")
     parser.add_argument("--b1", type=float, default=0.5, help="adam: decay of first order momentum of gradient")
