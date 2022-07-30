@@ -1,0 +1,8 @@
+training with 50% Toronto3Dcontinue trainlearning rate 1e-3['L001_1_voxels.npy']['L001_2_voxels.npy', 'L002_voxels.npy', 'L003_voxels.npy', 'L004_voxels.npy']Adam (
+Parameter Group 0
+    amsgrad: False
+    betas: (0.9, 0.999)
+    eps: 1e-08
+    lr: 0.0005
+    weight_decay: 0
+)

@@ -253,9 +253,8 @@ def get_model(model_name, input_channels, output_channels, args):
         return GenNet(input_channels, output_channels), DisNet(input_channels, output_channels)
     elif model_name == "SegBig_Domain":
         from networks.network_seg import SegBig_FG as FGNet
-        from networks.network_seg import Segmentation_Dis as SegmentationDis
-        from networks.network_seg import Domain_Dis as DomainDis
-        return FGNet(input_channels, output_channels), SegmentationDis(output_channels), DomainDis()
+        from networks.network_seg import Domain_Dis as Dis
+        return FGNet(input_channels, output_channels), Dis(output_channels)
         
     
 class TqdmLoggingHandler(logging.Handler):
@@ -275,7 +274,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--rootdir', '-s', help='Path to data folder')
     parser.add_argument("--savedir", type=str, default="./results")
-    parser.add_argument('--block_size', help='Block size', type=float, default=4)
+    parser.add_argument('--block_size', help='Block size', type=float, default=16)
     parser.add_argument("--epochs", type=int, default=500)
     parser.add_argument("--batch_size", "-b", type=int, default=8)
     parser.add_argument("--iter", "-i", type=int, default=1200)
@@ -340,18 +339,16 @@ def main():
     # create model
     print("Creating the network...", end="", flush=True)
     if args.nocolor:
-        FGNet, dis1, dis2 = get_model(args.model, input_channels=1, output_channels=N_CLASSES, args=args)
+        FGNet, dis = get_model(args.model, input_channels=1, output_channels=N_CLASSES, args=args)
     else:
-        FGNet, dis1, dis2 = get_model(args.model, input_channels=3, output_channels=N_CLASSES, args=args)
+        FGNet, dis = get_model(args.model, input_channels=3, output_channels=N_CLASSES, args=args)
     if args.test:
         FGNet.load_state_dict(torch.load(os.path.join(args.savedir, "FGNet_state_dict.pth")))
-        dis1.load_state_dict(torch.load(os.path.join(args.savedir, "dis1_state_dict.pth")))
-        dis2.load_state_dict(torch.load(os.path.join(args.savedir, "dis2_state_dict.pth")))
+        dis.load_state_dict(torch.load(os.path.join(args.savedir, "dis_state_dict.pth")))
 
     if args.continuetrain:
         FGNet.load_state_dict(torch.load(os.path.join(args.savedir, "FGNet_state_dict.pth")))
-        dis1.load_state_dict(torch.load(os.path.join(args.savedir, "dis1_state_dict.pth")))
-        dis2.load_state_dict(torch.load(os.path.join(args.savedir, "dis2_state_dict.pth")))
+        dis.load_state_dict(torch.load(os.path.join(args.savedir, "dis_state_dict.pth")))
         print("reload previous model")
 
     if args.finetuning:

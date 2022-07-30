@@ -282,10 +282,10 @@ def main():
     filelist_test = [
         # "area2_voxels.npy",
         # "area3_voxels.npy",
-        'mls2016_8class_20cm_ascii_area1_1_2_voxels.npy',
-        # 'mls2016_8class_20cm_ascii_area1_2_voxels.npy',
-        # "mls2016_8class_20cm_ascii_area2_voxels.npy",
-        # 'mls2016_8class_20cm_ascii_area3_voxels.npy',
+        # 'mls2016_8class_20cm_ascii_area1_1_2_voxels.npy',
+        'mls2016_8class_20cm_ascii_area1_voxels.npy',
+        "mls2016_8class_20cm_ascii_area2_voxels.npy",
+        'mls2016_8class_20cm_ascii_area3_voxels.npy',
 
         # "bildstein_station1_xyz_intensity_rgb_voxels.npy",
         # "bildstein_station3_xyz_intensity_rgb_voxels.npy",

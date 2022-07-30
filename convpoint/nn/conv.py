@@ -27,7 +27,7 @@ class PtConv(LayerBase):
             self.bias.data.uniform_(0,0)
 
         # centers
-        center_data = np.zeros((dim, n_centers))
+        center_data = np.zeros((dim, n_centers))  # (3，16)
         for i in range(n_centers):
             coord = np.random.rand(dim)*2 - 1
             while (coord**2).sum() > 1:
@@ -39,20 +39,20 @@ class PtConv(LayerBase):
         # MLP
         self.l1 = nn.Linear(dim*n_centers, 2*n_centers)
         self.l2 = nn.Linear(2*n_centers, n_centers)
-        self.l3 = nn.Linear(n_centers, n_centers)
+        self.l3 = nn.Linear(n_centers, n_centers) #16
 
 
     def forward(self, input, points, K, next_pts=None, normalize=True, indices_=None, return_indices=False, dilation=1):
 
         if indices_ is None:
             if isinstance(next_pts, int) and points.size(1) != next_pts:
-                # convolution with reduction
+                # convolution with reduction  P >Q
                 indices, next_pts_ = self.indices_conv_reduction(points, K * dilation, next_pts)
             elif (next_pts is None) or (isinstance(next_pts, int) and points.size(1) == next_pts):
-                # convolution without reduction
+                # convolution without reduction  p==Q
                 indices, next_pts_ = self.indices_conv(points, K * dilation)
             else:
-                # convolution with up sampling or projection on given points
+                # convolution with up sampling or projection on given points  P < Q
                 indices, next_pts_ = self.indices_deconv(points, next_pts, K * dilation)
 
             if next_pts is None or isinstance(next_pts, int):
@@ -63,7 +63,7 @@ class PtConv(LayerBase):
         else:
             indices = indices_
 
-        batch_size = input.size(0)
+        batch_size = input.size(0)   # batch point features
         n_pts = input.size(1)
 
         if dilation > 1:

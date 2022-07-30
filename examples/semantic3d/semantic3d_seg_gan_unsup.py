@@ -273,8 +273,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--rootdir', '-s', help='Path to data folder')
     parser.add_argument("--savedir", type=str, default="./results")
-    parser.add_argument('--block_size', help='Block size', type=float, default=4)
-    parser.add_argument("--epochs", type=int, default=200)
+    parser.add_argument('--block_size', help='Block size', type=float, default=20)
+    parser.add_argument("--epochs", type=int, default=300)
     parser.add_argument("--batch_size", "-b", type=int, default=10)
     parser.add_argument("--iter", "-i", type=int, default=1200)
     parser.add_argument("--npoints", "-n", type=int, default=8192)
@@ -323,25 +323,21 @@ def main():
     
 
     filelist_val=[
-        #"area3_voxels.npy",
         "mls2016_8class_20cm_ascii_area1_voxels.npy",
         "mls2016_8class_20cm_ascii_area2_voxels.npy",
         "mls2016_8class_20cm_ascii_area3_voxels.npy",
-        #"mls2016_8class_20cm_ascii_area1_voxels.npy",
     ]
     filelist_test=[
-        #"area3_voxels.npy",
         "mls2016_8class_20cm_ascii_area1_voxels.npy",
         "mls2016_8class_20cm_ascii_area2_voxels.npy",
         "mls2016_8class_20cm_ascii_area3_voxels.npy",
-        #"mls2016_8class_20cm_ascii_area1_voxels.npy",
     ]
     print(filelist_train,filelist_train_trans)
     print(filelist_val)
 
     N_CLASSES= 8
 
-    print(args.model)
+    saved_args = locals()
     # create model
     print("Creating the network...", end="", flush=True)
     if args.nocolor:
@@ -352,7 +348,7 @@ def main():
     if args.test:
         FGNet.load_state_dict(torch.load(os.path.join(args.savedir, "FGNet_state_dict.pth")))
         dis.load_state_dict(torch.load(os.path.join(args.savedir, "dis_state_dict.pth")))
-
+        print("test")
     if args.continuetrain:
         FGNet.load_state_dict(torch.load(os.path.join(args.savedir, "FGNet_state_dict.pth")))
         dis.load_state_dict(torch.load(os.path.join(args.savedir, "dis_state_dict.pth")))
@@ -436,9 +432,9 @@ def main():
         optimizer_dis = torch.optim.Adam(dis.parameters(), lr=args.lr, weight_decay=0.0001)  # Discriminator use large learning rate
 
         # scheduler_FGNet = lr_scheduler.CosineAnnealingLR(optimizer_FGNet, T_max=30, eta_min=1e-5)
-        scheduler_lr_decay_full = PolynomialLRDecay(optimizer_full, max_decay_steps=args.epochs, end_learning_rate=0.00001, power=2.0)
-        scheduler_lr_decay_FGNet = PolynomialLRDecay(optimizer_FGNet, max_decay_steps=args.epochs, end_learning_rate=0.00001, power=2.0)
-        scheduler_lr_decay_dis = PolynomialLRDecay(optimizer_dis, max_decay_steps=args.epochs, end_learning_rate=0.00001, power=2.0)
+        scheduler_lr_decay_full = PolynomialLRDecay(optimizer_full, max_decay_steps=args.epochs, end_learning_rate=0.000001, power=2.0)
+        scheduler_lr_decay_FGNet = PolynomialLRDecay(optimizer_FGNet, max_decay_steps=args.epochs, end_learning_rate=0.000001, power=2.0)
+        scheduler_lr_decay_dis = PolynomialLRDecay(optimizer_dis, max_decay_steps=args.epochs, end_learning_rate=0.000001, power=2.0)
 
         print("Done")
         
@@ -449,10 +445,9 @@ def main():
         
         # create the log file
         logs = open(os.path.join(root_folder, "log.txt"), "w")
-        logs.write(str(FGNet))
+        logs.write(f"{saved_args}")
         logs.flush()
-        logs.write(str(filelist_train))
-        logs.write(str(filelist_val))
+        logs.write(str(FGNet))
         logs.flush()
         logs.write(str(optimizer_FGNet))
         logs.flush()
@@ -631,12 +626,13 @@ def main():
     ##### TEST
     else:
         # semGen.eval()
+        # logs.write("test")
+        # logs.flush()
 
         FGNet.eval()
         dis.eval()
 
         for filename in filelist_test:
-            print(filename)
             ds = PartDatasetTest(filename, args.rootdir,
                             block_size=args.block_size,
                             npoints= args.npoints,
@@ -654,15 +650,12 @@ def main():
                 for pts, features, indices in t:
                     
                     features = features.cuda()
-                    #print(features)
-                    #print(pts)
+
                     pts = pts.cuda()
 
                     point_features = FGNet(features, pts)
                     outputs_1, outputs_2 = dis(features, point_features)
 
-                    # outputs,_ = net(features, pts)
-                    # print(outputs)
                     outputs = torch.add(outputs_1, outputs_2)/2
                     outputs_np = outputs.cpu().numpy().reshape((-1, N_CLASSES))
                     
