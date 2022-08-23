@@ -15,18 +15,24 @@ def show_image():
     cm = np.zeros((N_CLASSES, N_CLASSES))
 
     original_path = "/media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/train/pointcloud/"
-    original_files = ["mls2016_8class_20cm_ascii_area2_voxels.npy"]
+    original_files = ["mls2016_8class_20cm_ascii_area1_voxels.npy"]
 
-    predict_root= "/media/liangdao/DATA/segmentation/ConvPoint/data/SEMANTIC3D/SegBig_nocolor/SegBig_8192_finetuning_linearlayer_nocolorTrue_drop0.5_2022-07-04-10-32-07/results_tum/"
-    predict_file= ["mls2016_8class_20cm_ascii_area2_voxels.npy_pts.txt"]
+    no_transfer_path = "/media/liangdao/DATA/segmentation/ConvPoint/data/SEMANTIC3D/SegBig_nocolor/results/"
+    no_transfer_files = ["mls2016_8class_20cm_ascii_area1_voxels.npy_pts.txt"]
+
+    predict_root= "/media/liangdao/DATA/segmentation/ConvPoint/data/SEMANTIC3D/SegBig_nocolor/SegBig_Domain_8192_nocolorTrue_drop0.5_2022-08-01-17-55-41/SegBig_Domain_8192_nocolorTrue_drop0.5_2022-08-02-16-12-18/results/"
+    predict_file= ["mls2016_8class_20cm_ascii_area1_voxels.npy_pts.txt"]
+
     for i in range(len(predict_file)):
-        #point = np.load(predict_root + predict_filee[i])
-        point = np.loadtxt(predict_root+ predict_file[i])
+        #point = np.load(original_path + original_files[i])
+        #point = np.loadtxt(predict_root+ predict_file[i])
+        point = np.loadtxt(no_transfer_path+ no_transfer_files[i])
+        #points = np.concatenate(points,point)
         print(point)
+    
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(point[:,:3])
-        labels =point[:,-1]
-
+        labels =point[:,-1]+1
 
         max_label = 8
         colors = plt.get_cmap("tab20")(labels/(max_label if max_label > 0 else 1))
@@ -45,7 +51,7 @@ def statistic_iou():
     cm = np.zeros((N_CLASSES, N_CLASSES))
 
     original_path = "/media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/train/pointcloud/"
-    original_files = ["mls2016_8class_20cm_ascii_area1_voxels.npy","mls2016_8class_20cm_ascii_area2_voxels.npy","mls2016_8class_20cm_ascii_area3_voxels.npy"]
+    original_files = ["mls2016_8class_20cm_ascii_area1_1_2_voxels.npy","mls2016_8class_20cm_ascii_area1_2_voxels.npy","mls2016_8class_20cm_ascii_area2_voxels.npy","mls2016_8class_20cm_ascii_area3_voxels.npy"]
     # original_files = [ "bildstein_station1_xyz_intensity_rgb_voxels.npy",
     #         "bildstein_station3_xyz_intensity_rgb_voxels.npy",
     #         "domfountain_station1_xyz_intensity_rgb_voxels.npy",
@@ -61,7 +67,7 @@ def statistic_iou():
     #         "sg27_station9_intensity_rgb_voxels.npy",
     #         "sg28_station4_intensity_rgb_voxels.npy",
     #         "untermaederbrunnen_station3_xyz_intensity_rgb_voxels.npy",]
-    predict_root= "/media/liangdao/DATA/segmentation/ConvPoint/data/SEMANTIC3D/SegBig_nocolor"+"/results/"
+    predict_root= "/media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/SegBig_8192_nocolorTrue_drop0.5_2022-08-20-17-52-27/SegBig_8192_nocolorTrue_drop0.5_2022-08-23-09-18-38"+"/results/"
 
     print(predict_root)
     # predict_file= ["mls2016_8class_20cm_ascii_area1_2_voxels.labels","mls2016_8class_20cm_ascii_area2_voxels.labels","mls2016_8class_20cm_ascii_area3_voxels.labels"]

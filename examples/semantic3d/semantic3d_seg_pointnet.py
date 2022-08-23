@@ -57,6 +57,11 @@ def wblue(str):
 def wgreen(str):
     return bcolors.OKGREEN+str+bcolors.ENDC
 
+def discrepancy(out1, out2):
+    """discrepancy loss"""
+    out = torch.mean(torch.abs(F.softmax(out1, dim=-1) - F.softmax(out2, dim=-1)))
+    return out
+
 def nearest_correspondance(pts_src, pts_dest, data_src, K=1):
     print(pts_dest)
     indices = nearest_neighbors.knn(pts_src.copy(), pts_dest.copy(), K, omp=True)
@@ -488,11 +493,11 @@ def main():
 
                 point_features_trans = FGNet(features_trans, pts_trans)
                 outputs_trans_1, outputs_trans_2 = dis(features_trans, point_features_trans)
-
+                
                 seg_loss_trans_1 = F.cross_entropy(outputs_trans_1.view(-1, N_CLASSES), seg_trans.view(-1))
                 seg_loss_trans_2 = F.cross_entropy(outputs_trans_2.view(-1, N_CLASSES), seg_trans.view(-1))
 
-                loss = seg_loss_trans_1+seg_loss_trans_2
+                loss = seg_loss_trans_1+seg_loss_trans_2 
 
                 loss.backward()
 
@@ -507,12 +512,17 @@ def main():
                 point_features_trans = FGNet(features_trans, pts_trans)
                 outputs_trans_1, outputs_trans_2 = dis(features_trans, point_features_trans)
 
+                point_features = FGNet(features, pts)
+                outputs_1, outputs_2 = dis(features, point_features)
+
                 seg_loss_trans_1 = F.cross_entropy(outputs_trans_1.view(-1, N_CLASSES), seg_trans.view(-1))
                 seg_loss_trans_2 = F.cross_entropy(outputs_trans_2.view(-1, N_CLASSES), seg_trans.view(-1))
 
                 adv_loss = F.l1_loss(outputs_trans_1, outputs_trans_2)
 
-                loss_trans = seg_loss_trans_1+seg_loss_trans_2-adv_loss
+                loss_adv = discrepancy(outputs_1, outputs_2) 
+
+                loss_trans = seg_loss_trans_1+seg_loss_trans_2- adv_loss - loss_adv
 
                 loss_trans.backward()
 
@@ -527,6 +537,7 @@ def main():
 
                 point_features = FGNet(features, pts)
                 outputs_1, outputs_2 = dis(features, point_features)
+
                 adv_loss = F.l1_loss(outputs_1, outputs_2)
 
                 point_features_trans = FGNet(features_trans, pts_trans)

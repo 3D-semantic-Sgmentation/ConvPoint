@@ -35,7 +35,9 @@ torch.cuda.empty_cache()
 import gc
 
 from torch_poly_lr_decay import PolynomialLRDecay
-
+from Model import Net_MDA_FEATURE
+from data_utils import normal_pc, jitter_point_cloud
+from model_pointnet import Pointnet_cls
 
 gc.collect()
 torch.cuda.memory_summary(device=None, abbreviated=False)
@@ -153,11 +155,17 @@ class PartDataset():
 
             # random jittering
             fts = fts.astype(np.uint8)
-            fts = np.array(self.transform( Image.fromarray(np.expand_dims(fts, 0)) ))
+            fts = np.array(self.transform(Image.fromarray(np.expand_dims(fts, 0))))
             fts = np.squeeze(fts, 0)
         
         fts = fts.astype(np.float32)
         fts = fts / 255 - 0.5
+        
+        pts_new = normal_pc(pts)
+        if self.training:
+            pts_new = jitter_point_cloud(pts_new)
+        pts_new = np.expand_dims(pts_new.transpose(), axis=2)
+        pts_new = torch.from_numpy(pts_new).float()
 
         if self.nocolor:
             fts = np.ones((pts.shape[0], 1))
@@ -165,13 +173,15 @@ class PartDataset():
         pts = torch.from_numpy(pts).float()
         fts = torch.from_numpy(fts).float()
         lbs = torch.from_numpy(lbs).long()
-
+        
         # if self.transfer==True:
         #     clabel = torch.from_numpy(np.zeros(lbs.shape[0])).float()
         # if self.transfer==False:
         #     clabel = torch.from_numpy(np.ones(lbs.shape[0])).float()
 
-        return pts, fts, lbs
+    
+
+        return pts, fts, lbs, pts_new
 
     def __len__(self):
         return self.iterations
@@ -254,6 +264,10 @@ def get_model(model_name, input_channels, output_channels, args):
         from networks.network_seg import SegSmall_Features_Generator as GenNet
         from networks.network_seg import SegSmall_Features_Discriminotor as DisNet
         return GenNet(input_channels, output_channels), DisNet(input_channels, output_channels)
+    elif model_name == "SegBig_pointdan":
+        from networks.network_seg import SegBig_FG as FGNet
+        from networks.network_seg import SegBig_PointDAN_Dis as DisNet
+        return FGNet(input_channels, output_channels), DisNet(input_channels, output_channels), Net_MDA_FEATURE()
         
     
 class TqdmLoggingHandler(logging.Handler):
@@ -274,8 +288,8 @@ def main():
     parser.add_argument('--rootdir', '-s', help='Path to data folder')
     parser.add_argument("--savedir", type=str, default="./results")
     parser.add_argument('--block_size', help='Block size', type=float, default=30)
-    parser.add_argument("--epochs", type=int, default=300)
-    parser.add_argument("--batch_size", "-b", type=int, default=10)
+    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--batch_size", "-b", type=int, default=6)
     parser.add_argument("--iter", "-i", type=int, default=1200)
     parser.add_argument("--npoints", "-n", type=int, default=8192)
     parser.add_argument("--threads", type=int, default=2)
@@ -284,8 +298,8 @@ def main():
     parser.add_argument("--savepts", action="store_true")
     parser.add_argument("--continuetrain", action="store_true")
     parser.add_argument("--finetuning", action="store_true")
-    parser.add_argument("--test_step", default=1, type=float)
-    parser.add_argument("--model", default="SegBig_GAN", type=str)
+    parser.add_argument("--test_step", default=0.8, type=float)
+    parser.add_argument("--model", default="SegBig_pointdan", type=str)
     parser.add_argument("--drop", default=0.5, type=float)
     parser.add_argument("--lr", type=float, default=1e-4, help="adam: learning rate")
     parser.add_argument("--b1", type=float, default=0.5, help="adam: decay of first order momentum of gradient")
@@ -342,17 +356,19 @@ def main():
     # create model
     print("Creating the network...", end="", flush=True)
     if args.nocolor:
-        FGNet, dis = get_model(args.model, input_channels=1, output_channels=N_CLASSES, args=args)
+        FGNet, dis, pointdan = get_model(args.model, input_channels=1, output_channels=N_CLASSES, args=args)
     else:
-        FGNet, dis = get_model(args.model, input_channels=3, output_channels=N_CLASSES, args=args)
+        FGNet, dis, pointdan = get_model(args.model, input_channels=3, output_channels=N_CLASSES, args=args)
 
     if args.test:
         FGNet.load_state_dict(torch.load(os.path.join(args.savedir, "FGNet_state_dict.pth")))
         dis.load_state_dict(torch.load(os.path.join(args.savedir, "dis_state_dict.pth")))
+        pointdan.load_state_dict(torch.load(os.path.join(args.savedir, "pointdan_dict.pth")))
         print("test")
     if args.continuetrain:
         FGNet.load_state_dict(torch.load(os.path.join(args.savedir, "FGNet_state_dict.pth")))
         dis.load_state_dict(torch.load(os.path.join(args.savedir, "dis_state_dict.pth")))
+        pointdan.load_state_dict(torch.load(os.path.join(args.savedir, "pointdan_dict.pth")))
         print("loaded model")
     if args.finetuning:
         # ---------------------
@@ -384,7 +400,7 @@ def main():
         
     FGNet.cuda()
     dis.cuda()
-
+    pointdan.cuda()
     print("Done")
     print("discriminator output 1 class(Linear)")
     print("Gan Model")
@@ -427,9 +443,9 @@ def main():
 
         print("Create optimizer...", end="", flush=True)
 
-        optimizer_full = torch.optim.Adam(itertools.chain(FGNet.parameters(), dis.parameters()), lr=args.lr, weight_decay=0.0001)  # Discriminator use large learning rate
+        optimizer_full = torch.optim.Adam(itertools.chain(FGNet.parameters(), dis.parameters(), pointdan.parameters()), lr=args.lr, weight_decay=0.0001)  # Discriminator use large learning rate
 
-        optimizer_FGNet = torch.optim.Adam(FGNet.parameters(), lr=args.lr, weight_decay=0.0001)
+        optimizer_FGNet = torch.optim.Adam(itertools.chain(FGNet.parameters(), pointdan.parameters()), lr=args.lr, weight_decay=0.0001)
         optimizer_dis = torch.optim.Adam(dis.parameters(), lr=args.lr, weight_decay=0.0001)  # Discriminator use large learning rate
 
         # scheduler_FGNet = lr_scheduler.CosineAnnealingLR(optimizer_FGNet, T_max=30, eta_min=1e-5)
@@ -471,22 +487,39 @@ def main():
             cm = np.zeros((N_CLASSES, N_CLASSES))
             t = tqdm(zip(train_loader,train_trans_loader), ncols=100, desc="Epoch {}".format(epoch))
 
-            for (pts, features, seg ),(pts_trans, features_trans, seg_trans) in t:
+            for (pts, features, seg, pts_new),(pts_trans, features_trans, seg_trans, pts_new_trans) in t:
                 
                 features = features.cuda() # n*3
                 pts = pts.cuda()  # n*3
                 seg = seg.cuda()
+                pts_new = pts_new.cuda()
+
+    
 
                 features_trans = features_trans.cuda() # n*3
                 pts_trans = pts_trans.cuda()  # n*3
                 seg_trans = seg_trans.cuda()              
-            
+                pts_new_trans = pts_new_trans.cuda()
                 # ---------------------
                 #  Step1
                 # --------------------
                 optimizer_full.zero_grad()
 
                 point_features_trans = FGNet(features_trans, pts_trans)
+                x, feat_ori, node_idx = pointdan(pts_new_trans)
+                x = torch.unsqueeze(x, 1)
+                x = x.repeat([1, 8192,1])
+
+
+                # mid_feature.unsqueeze()
+                # mid_feature.transpose(2, 1)
+                # tqdm.write(str(x.shape))
+                # tqdm.write(str(feat_ori.shape))
+                # tqdm.write(str(node_idx.shape))
+                # tqdm.write(str(point_features_trans.shape))
+                # tqdm.write(str(x.shape))
+                point_features_trans = torch.cat((point_features_trans, x), -1)
+                # tqdm.write(str(point_features_trans.shape))
                 outputs_trans_1, outputs_trans_2 = dis(features_trans, point_features_trans)
 
                 seg_loss_trans_1 = F.cross_entropy(outputs_trans_1.view(-1, N_CLASSES), seg_trans.view(-1))
@@ -505,6 +538,12 @@ def main():
                 optimizer_dis.zero_grad()
 
                 point_features_trans = FGNet(features_trans, pts_trans)
+                x, feat_ori, node_idx = pointdan(pts_new_trans)
+
+                x = torch.unsqueeze(x, 1)
+                x = x.repeat([1, 8192,1])
+
+                point_features_trans = torch.cat((point_features_trans, x), -1)
                 outputs_trans_1, outputs_trans_2 = dis(features_trans, point_features_trans)
 
                 seg_loss_trans_1 = F.cross_entropy(outputs_trans_1.view(-1, N_CLASSES), seg_trans.view(-1))
@@ -526,10 +565,23 @@ def main():
                 optimizer_FGNet.zero_grad()
 
                 point_features = FGNet(features, pts)
+                x, feat_ori, node_idx = pointdan(pts_new)
+
+                x = torch.unsqueeze(x, 1)
+
+                x = x.repeat([1, 8192,1])
+
+                point_features = torch.cat((point_features, x), -1)
                 outputs_1, outputs_2 = dis(features, point_features)
                 adv_loss = F.l1_loss(outputs_1, outputs_2)
 
                 point_features_trans = FGNet(features_trans, pts_trans)
+                x, feat_ori, node_idx = pointdan(pts_new_trans)
+
+                x = torch.unsqueeze(x, 1)
+                x = x.repeat([1, 8192,1])
+
+                point_features_trans = torch.cat((point_features_trans, x), -1)
                 outputs_trans_1, outputs_trans_2 = dis(features_trans, point_features_trans)
 
                 seg_loss_trans_1 = F.cross_entropy(outputs_trans_1.view(-1, N_CLASSES), seg_trans.view(-1))
@@ -578,13 +630,22 @@ def main():
                     cm = np.zeros((N_CLASSES, N_CLASSES))
                     t = tqdm(val_loader, ncols=100, desc="Epoch {}".format(epoch))
                     
-                    for pts, features, seg in t:
+                    for pts, features, seg, pts_new in t:
 
                         features = features.cuda()
                         pts = pts.cuda()
                         seg = seg.cuda()
-
+                        pts_new = pts_new.cuda()
                         point_features = FGNet(features, pts)
+                        
+                        x, feat_ori, node_idx = pointdan(pts_new)
+
+                        x = torch.unsqueeze(x, 1)
+
+                        x = x.repeat([1, 8192,1])
+
+                        point_features = torch.cat((point_features, x), -1)
+
                         outputs_1, outputs_2 = dis(features, point_features)
 
                         outputs = torch.add(outputs_1, outputs_2)/2
@@ -614,6 +675,8 @@ def main():
                         print("when iou equals ",iou,"save at",os.path.join(root_folder, "state_dict.pth"))
                         torch.save(FGNet.state_dict(), os.path.join(root_folder, "FGNet_state_dict.pth"))
                         torch.save(dis.state_dict(), os.path.join(root_folder, "dis_state_dict.pth"))
+                        torch.save(pointdan.state_dict(), os.path.join(root_folder, "pointdan_dict.pth"))
+                        
 
                         
                     logs.write(f"{epoch} {oa} {aa} {iou} {val_losses}\n")

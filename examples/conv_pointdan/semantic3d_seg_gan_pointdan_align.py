@@ -3,8 +3,9 @@
 # add the parent folder to the python path to access convpoint library
 import sys
 sys.path.append('../../')
-from utils import metrics as metrics
 import convpoint.knn.lib.python.nearest_neighbors as nearest_neighbors
+
+from utils import metrics as metrics
 
 # from convpoint.knn.lib.python import nearest_neighbors as nearest_neighbors
 
@@ -26,13 +27,17 @@ from sklearn.metrics import confusion_matrix
 import time
 from torch.utils.data import TensorDataset, ConcatDataset
 import logging
-
+from torch.optim import lr_scheduler
 # import convpoint.knn.lib.python.nearest_neighbors as nearest_neighbors
 
 from PIL import Image
 torch.cuda.empty_cache()
 import gc
-from torch.optim import lr_scheduler
+
+from torch_poly_lr_decay import PolynomialLRDecay
+from Model import Net_MDA_FEATURE
+from data_utils import normal_pc, jitter_point_cloud
+from model_pointnet import Pointnet_cls
 
 gc.collect()
 torch.cuda.memory_summary(device=None, abbreviated=False)
@@ -150,11 +155,17 @@ class PartDataset():
 
             # random jittering
             fts = fts.astype(np.uint8)
-            fts = np.array(self.transform( Image.fromarray(np.expand_dims(fts, 0)) ))
+            fts = np.array(self.transform(Image.fromarray(np.expand_dims(fts, 0))))
             fts = np.squeeze(fts, 0)
         
         fts = fts.astype(np.float32)
         fts = fts / 255 - 0.5
+        
+        pts_new = normal_pc(pts)
+        if self.training:
+            pts_new = jitter_point_cloud(pts_new)
+        pts_new = np.expand_dims(pts_new.transpose(), axis=2)
+        pts_new = torch.from_numpy(pts_new).float()
 
         if self.nocolor:
             fts = np.ones((pts.shape[0], 1))
@@ -162,13 +173,15 @@ class PartDataset():
         pts = torch.from_numpy(pts).float()
         fts = torch.from_numpy(fts).float()
         lbs = torch.from_numpy(lbs).long()
-
+        
         # if self.transfer==True:
         #     clabel = torch.from_numpy(np.zeros(lbs.shape[0])).float()
         # if self.transfer==False:
         #     clabel = torch.from_numpy(np.ones(lbs.shape[0])).float()
 
-        return pts, fts, lbs
+    
+
+        return pts, fts, lbs, pts_new
 
     def __len__(self):
         return self.iterations
@@ -251,11 +264,17 @@ def get_model(model_name, input_channels, output_channels, args):
         from networks.network_seg import SegSmall_Features_Generator as GenNet
         from networks.network_seg import SegSmall_Features_Discriminotor as DisNet
         return GenNet(input_channels, output_channels), DisNet(input_channels, output_channels)
-    elif model_name == "SegBig_Domain":
+    elif model_name == "SegBig_pointdan":
         from networks.network_seg import SegBig_FG as FGNet
-        from networks.network_seg import Domain_Dis as Dis
-        return FGNet(input_channels, output_channels), Dis(output_channels)
-        
+        from networks.network_seg import SegBig_PointDAN_Dis as DisNet
+        return FGNet(input_channels, output_channels), DisNet(input_channels, output_channels)
+
+
+def discrepancy(out1, out2):
+    """discrepancy loss"""
+    out = torch.mean(torch.abs(F.softmax(out1, dim=-1) - F.softmax(out2, dim=-1)))
+    return out       
+
     
 class TqdmLoggingHandler(logging.Handler):
     def __init__(self, level=logging.NOTSET):
@@ -274,9 +293,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--rootdir', '-s', help='Path to data folder')
     parser.add_argument("--savedir", type=str, default="./results")
-    parser.add_argument('--block_size', help='Block size', type=float, default=16)
-    parser.add_argument("--epochs", type=int, default=500)
-    parser.add_argument("--batch_size", "-b", type=int, default=8)
+    parser.add_argument('--block_size', help='Block size', type=float, default=30)
+    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--batch_size", "-b", type=int, default=6)
     parser.add_argument("--iter", "-i", type=int, default=1200)
     parser.add_argument("--npoints", "-n", type=int, default=8192)
     parser.add_argument("--threads", type=int, default=2)
@@ -286,11 +305,12 @@ def main():
     parser.add_argument("--continuetrain", action="store_true")
     parser.add_argument("--finetuning", action="store_true")
     parser.add_argument("--test_step", default=0.8, type=float)
-    parser.add_argument("--model", default="SegBig_Domain", type=str)
+    parser.add_argument("--model", default="SegBig_pointdan", type=str)
     parser.add_argument("--drop", default=0.5, type=float)
     parser.add_argument("--lr", type=float, default=1e-4, help="adam: learning rate")
     parser.add_argument("--b1", type=float, default=0.5, help="adam: decay of first order momentum of gradient")
     parser.add_argument("--b2", type=float, default=0.999, help="adam: decay of first order momentum of gradient")
+    parser.add_argument("--beta", type=float, default=0.001, help="adam: decay of first order momentum of gradient")
     
     args = parser.parse_args()
 
@@ -311,46 +331,49 @@ def main():
         "domfountain_station3_xyz_intensity_rgb_voxels.npy",
         "neugasse_station1_xyz_intensity_rgb_voxels.npy",
         "sg27_station1_intensity_rgb_voxels.npy",
-        "sg27_station2_intensity_rgb_voxels.npy",
+        "sg27_station5_intensity_rgb_voxels.npy",
         "untermaederbrunnen_station1_xyz_intensity_rgb_voxels.npy",
+        "bildstein_station5_xyz_intensity_rgb_voxels.npy",
+        "domfountain_station2_xyz_intensity_rgb_voxels.npy",
+        "sg27_station4_intensity_rgb_voxels.npy",
+        "sg27_station2_intensity_rgb_voxels.npy",
+        "sg27_station9_intensity_rgb_voxels.npy",
+        "sg28_station4_intensity_rgb_voxels.npy",
+        "untermaederbrunnen_station3_xyz_intensity_rgb_voxels.npy",
     ]
     
 
     filelist_val=[
-        #"area3_voxels.npy",
         "mls2016_8class_20cm_ascii_area1_voxels.npy",
         "mls2016_8class_20cm_ascii_area2_voxels.npy",
         "mls2016_8class_20cm_ascii_area3_voxels.npy",
-        #"mls2016_8class_20cm_ascii_area1_voxels.npy",
     ]
     filelist_test=[
-        #"area3_voxels.npy",
         "mls2016_8class_20cm_ascii_area1_voxels.npy",
         "mls2016_8class_20cm_ascii_area2_voxels.npy",
         "mls2016_8class_20cm_ascii_area3_voxels.npy",
-        #"mls2016_8class_20cm_ascii_area1_voxels.npy",
     ]
     print(filelist_train,filelist_train_trans)
     print(filelist_val)
 
     N_CLASSES= 8
 
-    print(args.model)
+    saved_args = locals()
     # create model
     print("Creating the network...", end="", flush=True)
     if args.nocolor:
         FGNet, dis = get_model(args.model, input_channels=1, output_channels=N_CLASSES, args=args)
     else:
         FGNet, dis = get_model(args.model, input_channels=3, output_channels=N_CLASSES, args=args)
+
     if args.test:
         FGNet.load_state_dict(torch.load(os.path.join(args.savedir, "FGNet_state_dict.pth")))
         dis.load_state_dict(torch.load(os.path.join(args.savedir, "dis_state_dict.pth")))
-
+        print("test")
     if args.continuetrain:
         FGNet.load_state_dict(torch.load(os.path.join(args.savedir, "FGNet_state_dict.pth")))
-        dis.load_state_dict(torch.load(os.path.join(args.savedir, "dis_state_dict.pth")))
-        print("reload previous model")
-
+        # dis.load_state_dict(torch.load(os.path.join(args.savedir, "dis_state_dict.pth")))
+        print("loaded model")
     if args.finetuning:
         # ---------------------
         #  Load pretrained model
@@ -358,10 +381,7 @@ def main():
         pretrained_dict = torch.load(os.path.join(args.savedir, "state_dict.pth"))
 
         FGNet_dict = FGNet.state_dict()
-        # for k, v in pretrained_dict.items():
-        #     if k in FGNet_dict:
-        #         print(k)
-        # 1. filter out unnecessary keys
+
         pretrained_dict_gen = {k: v for k, v in pretrained_dict.items() if k in FGNet_dict}
         # 2. overwrite entries in the existing state dict
         FGNet_dict.update(pretrained_dict_gen)
@@ -369,20 +389,23 @@ def main():
         FGNet.load_state_dict(FGNet_dict)
         print("start load dis model")
 
-        dis_dict = dis1.state_dict()
+        dis_dict = dis.state_dict()
         for k, v in pretrained_dict.items():
             if k in dis_dict:
                 print(k)
         # 1. filter out unnecessary keys
-        pretrained_dict_gan = {k: v for k, v in pretrained_dict.items() if k in dis_dict}
+        pretrained_dict_dis = {k: v for k, v in pretrained_dict.items() if k in dis_dict}
         # 2. overwrite entries in the existing state dict
-        dis_dict.update(pretrained_dict_gan)
-        dis1.load_state_dict(dis_dict)
+        dis_dict.update(pretrained_dict_dis)
+        dis.load_state_dict(dis_dict)
+
+        # dis2.load_state_dict(dis_dict)
         print("load pretrained models")
         
     FGNet.cuda()
-    dis1.cuda()  # class
-    dis2.cuda()  # domain output
+    dis.cuda()
+    pointdan = Net_MDA_FEATURE()
+    pointdan.cuda()
     print("Done")
     print("discriminator output 1 class(Linear)")
     print("Gan Model")
@@ -423,10 +446,17 @@ def main():
                                             num_workers=args.threads)
         print("Done")
 
-        print("Create optimizer...", end="", flush=True)        
-        optimizer_dis = torch.optim.Adam(itertools.chain(dis1.parameters(), dis2.parameters()), lr=args.lr*5)  # Discriminator use large learning rate
-        optimizer_FGNet = torch.optim.Adam(FGNet.parameters(), lr=args.lr)  # Discriminator use large learning rate
-        scheduler = lr_scheduler.StepLR(optimizer_dis, 80, gamma=0.1, last_epoch=-1)
+        print("Create optimizer...", end="", flush=True)
+
+        optimizer_full = torch.optim.Adam(itertools.chain(FGNet.parameters(), dis.parameters(), pointdan.parameters()), lr=args.lr, weight_decay=0.0001)  # Discriminator use large learning rate
+
+        optimizer_FGNet = torch.optim.Adam(itertools.chain(FGNet.parameters(), pointdan.parameters()), lr=args.lr, weight_decay=0.0001)
+        optimizer_dis = torch.optim.Adam(dis.parameters(), lr=args.lr, weight_decay=0.0001)  # Discriminator use large learning rate
+
+        # scheduler_FGNet = lr_scheduler.CosineAnnealingLR(optimizer_FGNet, T_max=30, eta_min=1e-5)
+        scheduler_lr_decay_full = PolynomialLRDecay(optimizer_full, max_decay_steps=args.epochs, end_learning_rate=0.000001, power=2.0)
+        scheduler_lr_decay_FGNet = PolynomialLRDecay(optimizer_FGNet, max_decay_steps=args.epochs, end_learning_rate=0.000001, power=2.0)
+        scheduler_lr_decay_dis = PolynomialLRDecay(optimizer_dis, max_decay_steps=args.epochs, end_learning_rate=0.000001, power=2.0)
 
         print("Done")
         
@@ -437,108 +467,130 @@ def main():
         
         # create the log file
         logs = open(os.path.join(root_folder, "log.txt"), "w")
+        logs.write(f"{saved_args}")
+        logs.flush()
         logs.write(str(FGNet))
         logs.flush()
-        logs.write(str(filelist_train))
-        logs.write(str(filelist_val))
-        logs.write(str(args))
-        logs.flush()
         logs.write(str(optimizer_FGNet))
-
+        logs.flush()
+        logs.write(str(optimizer_dis))
         logs.flush()
 
         best_iou = 0.0
-
-        
-
         # iterate over epochs
         for epoch in range(args.epochs):
 
             #######
             # training
             FGNet.train()
-            dis1.train()
-            dis2.train()
+            dis.train()
 
             train_loss = 0
-            val_loss = 0
-            
-
+            adv_losses = 0
+            val_losses = 0
+            iouf = 0
             cm = np.zeros((N_CLASSES, N_CLASSES))
             t = tqdm(zip(train_loader,train_trans_loader), ncols=100, desc="Epoch {}".format(epoch))
 
-            for (pts, features, seg ),(pts_trans, features_trans, seg_trans) in t:
-                # ---------------------
-                #  Train Generate Semantic3D
-                # --------------------
-
-                features_trans = features_trans.cuda() # n*3
-                pts_trans = pts_trans.cuda()  # n*3
-                seg_trans = seg_trans.cuda()
-                # clabel_trans = clabel_trans.cuda()
-
-                optimizer_dis.zero_grad()
-
-                point_features_trans = FGNet(features_trans, pts_trans)
-                outputs_trans = dis1(features_trans, point_features_trans)
-
-                class_out_trans = dis2(features_trans, point_features_trans)
-                clabel_false = torch.zeros(class_out_trans.size(0)).cuda()
-
-                seg_loss_trans = F.cross_entropy(outputs_trans.view(-1, N_CLASSES), seg_trans.view(-1))
-                domain_loss_trans = torch.nn.NLLLoss()(class_out_trans.flatten(), clabel_false.long())
-
+            for (pts, features, seg, pts_new),(pts_trans, features_trans, seg_trans, pts_new_trans) in t:
+                
                 features = features.cuda() # n*3
                 pts = pts.cuda()  # n*3
                 seg = seg.cuda()
+                pts_new = pts_new.cuda()
 
-                point_features = FGNet(features, pts)
-                # outputs = dis1(features, point_features)
-
-                class_out = dis2(features, point_features)
-                clabel_true = torch.ones(class_out.size(0)).cuda()
-                
-                domain_loss = torch.nn.NLLLoss()(class_out.flatten(), clabel_true.long())
-
-                loss_dis = seg_loss_trans+0.0001*(domain_loss_trans+domain_loss)
-
-                loss_dis.backward()
-                optimizer_dis.step()
+                features_trans = features_trans.cuda() # n*3
+                pts_trans = pts_trans.cuda()  # n*3
+                seg_trans = seg_trans.cuda()              
+                pts_new_trans = pts_new_trans.cuda()
                 # ---------------------
-                #  Train Feature Generator TUMMLS
+                #  Step1 improve the source domain result
+                # --------------------
+                optimizer_full.zero_grad()
+
+                point_features_trans = FGNet(features_trans, pts_trans)
+
+                outputs_trans_1, outputs_trans_2 = dis(features_trans, point_features_trans)
+
+                seg_loss_trans_1 = F.cross_entropy(outputs_trans_1.view(-1, N_CLASSES), seg_trans.view(-1))
+                seg_loss_trans_2 = F.cross_entropy(outputs_trans_2.view(-1, N_CLASSES), seg_trans.view(-1))
+
+                loss = seg_loss_trans_1+seg_loss_trans_2
+
+                loss.backward()
+
+                optimizer_full.step()
+
+
+                # ---------------------
+                #  Step2 Train Discriminitor
+                # --------------------
+                optimizer_dis.zero_grad()
+
+                point_features_trans = FGNet(features_trans, pts_trans)
+
+                outputs_trans_1, outputs_trans_2 = dis(features_trans, point_features_trans)
+
+                seg_loss_trans_1 = F.cross_entropy(outputs_trans_1.view(-1, N_CLASSES), seg_trans.view(-1))
+                seg_loss_trans_2 = F.cross_entropy(outputs_trans_2.view(-1, N_CLASSES), seg_trans.view(-1))
+                
+                adv_loss = F.l1_loss(outputs_trans_1, outputs_trans_2)
+            
+                # Adversarial loss
+
+                loss_adv = - 1 * discrepancy(pred_t1, pred_t2) 
+
+                loss = args.weight * loss_s + loss_adv
+
+                loss_trans = seg_loss_trans_1+seg_loss_trans_2-adv_loss
+
+                loss_trans.backward()
+
+                optimizer_dis.step()
+
+
+                # ---------------------
+                # Step3 Train Feature Generator
                 # --------------------
 
                 optimizer_FGNet.zero_grad()
 
-                point_features_trans = FGNet(features_trans, pts_trans)
-                outputs_trans = dis1(features_trans, point_features_trans)
-
-                class_out_trans = dis2(features_trans, point_features_trans)
-
-                clabel_true = torch.ones(class_out_trans.size(0)).cuda()
-
-                seg_loss_trans = F.cross_entropy(outputs_trans.view(-1, N_CLASSES), seg_trans.view(-1))
-                domain_loss_trans = torch.nn.NLLLoss()(class_out_trans.flatten(), clabel_true.long())
-
-                features = features.cuda() # n*3
-                pts = pts.cuda()  # n*3
-                seg = seg.cuda()
-
                 point_features = FGNet(features, pts)
-                
-                outputs = dis1(features, point_features)
-                class_out = dis2(features, point_features)
-                clabel_false = torch.zeros(class_out.size(0)).cuda()
-                domain_loss = torch.nn.NLLLoss()(class_out.flatten(), clabel_false.long())
+                x, feat_ori, node_idx = pointdan(pts_new)
 
+                x = torch.unsqueeze(x, 1)
 
-                loss_FGNet = seg_loss_trans+0.0001*(domain_loss+domain_loss_trans)
-                loss_FGNet.backward()
+                x = x.repeat([1, 8192,1])
+
+                point_features = torch.cat((point_features, x), -1)
+                outputs_1, outputs_2 = dis(features, point_features)
+                adv_loss = F.l1_loss(outputs_1, outputs_2)
+
+                point_features_trans = FGNet(features_trans, pts_trans)
+                x, feat_ori, node_idx = pointdan(pts_new_trans)
+
+                x = torch.unsqueeze(x, 1)
+                x = x.repeat([1, 8192,1])
+
+                point_features_trans = torch.cat((point_features_trans, x), -1)
+                outputs_trans_1, outputs_trans_2 = dis(features_trans, point_features_trans)
+
+                seg_loss_trans_1 = F.cross_entropy(outputs_trans_1.view(-1, N_CLASSES), seg_trans.view(-1))
+                seg_loss_trans_2 = F.cross_entropy(outputs_trans_2.view(-1, N_CLASSES), seg_trans.view(-1))
+
+                loss = seg_loss_trans_1 + seg_loss_trans_2 + args.beta*adv_loss
+                loss.backward()
                 optimizer_FGNet.step()
-                
+
+
+                adv_losses += adv_loss.detach().cpu().item()
                 # ---------------------
-                #  Loss and Evaluation
-                # --------------------                
+                #  IOU and Loss
+                # --------------------
+                train_loss += (seg_loss_trans_1 + seg_loss_trans_2).detach().cpu().item()
+
+                outputs = torch.add(outputs_1, outputs_2)/2
+
                 output_np = np.argmax(outputs.cpu().detach().numpy(), axis=2).copy()
                 target_np = seg.cpu().numpy().copy()   # (16, 8192)
 
@@ -549,38 +601,49 @@ def main():
                 aa = f"{metrics.stats_accuracy_per_class(cm)[0]:.5f}"
                 iou = f"{metrics.stats_iou_per_class(cm)[0]:.5f}"
 
-                train_loss += loss_FGNet.detach().cpu().item()
-                #trans_loss += loss_t.detach().cpu().item()
-                    
-                t.set_postfix(OA=wblue(oa), AA=wblue(aa), IOU=wblue(iou), Train_LOSS=wblue(f"{train_loss/cm.sum():.4e}"))
+                t.set_postfix(OA=wblue(oa), AA=wblue(aa), IOU=wblue(iou), Train_LOSS=wblue(f"{train_loss/cm.sum():.4e}"), Adv_LOSS=wblue(f"{adv_losses/cm.sum():.4e}"))
+    
+                 # , Adv_LOSS=wblue(f"{adv_losses/cm.sum():.4e}")
 
             # write the logs
-            logs.write(f"{epoch} {oa} {aa} {iou}\n")
+            logs.write(f"{epoch} {oa} {aa} {iou} {train_loss} \n" + " train")
             logs.flush()
 
-            if epoch%2==0:
+            #draw_features(point_features_trans.cpu().detach().numpy().reshape(-1, point_features_trans.shape[2])[0:1000], seg_trans.cpu().detach().numpy().reshape(-1)[0:1000], title =str(epoch))
+
+            if epoch:
 
                 FGNet.eval()
-                dis1.eval()
-                dis2.eval()
+                dis.eval()
 
                 with torch.no_grad(): 
-          
+            
                     cm = np.zeros((N_CLASSES, N_CLASSES))
                     t = tqdm(val_loader, ncols=100, desc="Epoch {}".format(epoch))
                     
-                    for pts, features, seg in t:
+                    for pts, features, seg, pts_new in t:
 
                         features = features.cuda()
                         pts = pts.cuda()
                         seg = seg.cuda()
-                        
+                        pts_new = pts_new.cuda()
                         point_features = FGNet(features, pts)
-                        outputs = dis1(features, point_features)
+                        
+                        x, feat_ori, node_idx = pointdan(pts_new)
 
+                        x = torch.unsqueeze(x, 1)
+
+                        x = x.repeat([1, 8192,1])
+
+                        point_features = torch.cat((point_features, x), -1)
+
+                        outputs_1, outputs_2 = dis(features, point_features)
+
+                        outputs = torch.add(outputs_1, outputs_2)/2
                         output_np = np.argmax(outputs.cpu().detach().numpy(), axis=2).copy()
                         target_np = seg.cpu().numpy().copy()   # (16, 8192)
 
+                        
                         cm_ = confusion_matrix(target_np.ravel(), output_np.ravel(), labels=list(range(N_CLASSES)))
                         cm += cm_
 
@@ -590,35 +653,41 @@ def main():
 
                         iouf = metrics.stats_iou_per_class(cm)[0]          
 
-                        loss =  F.cross_entropy(outputs.view(-1, N_CLASSES), seg.view(-1))
-                        val_loss += loss.detach().cpu().item()
+                        seg_loss_1 = F.cross_entropy(outputs_1.view(-1, N_CLASSES), seg.view(-1))
+                        seg_loss_2 = F.cross_entropy(outputs_2.view(-1, N_CLASSES), seg.view(-1))
 
-                        t.set_postfix(OA=wblue(oa), AA=wblue(aa), IOU=wblue(iou), LOSS=wblue(f"{val_loss/cm.sum():.4e}"))
+                        val_losses += (seg_loss_1+seg_loss_2).detach().cpu().item()
+
+                        t.set_postfix(OA=wblue(oa), AA=wblue(aa), IOU=wblue(iou), LOSS=wblue(f"{val_losses/cm.sum():.4e}"))
 
                     if iouf>best_iou:
                         best_iou = iouf
                         # save the model
                         print("when iou equals ",iou,"save at",os.path.join(root_folder, "state_dict.pth"))
                         torch.save(FGNet.state_dict(), os.path.join(root_folder, "FGNet_state_dict.pth"))
-                        torch.save(dis1.state_dict(), os.path.join(root_folder, "dis1_state_dict.pth"))
-                        torch.save(dis2.state_dict(), os.path.join(root_folder, "dis2_state_dict.pth"))
+                        torch.save(dis.state_dict(), os.path.join(root_folder, "dis_state_dict.pth"))
 
                         
-                    logs.write(f"{epoch} {oa} {aa} {iou} {val_loss}\n")
+                    logs.write(f"{epoch} {oa} {aa} {iou} {val_losses}\n")
                     logs.flush()
 
+        #scheduler_FGNet.step()
+        scheduler_lr_decay_full.step()
+        scheduler_lr_decay_FGNet.step()
+        scheduler_lr_decay_dis.step()
 
         logs.close()
 
     ##### TEST
     else:
         # semGen.eval()
+        # logs.write("test")
+        # logs.flush()
+
         FGNet.eval()
-        dis1.eval()
-        dis2.eval()
+        dis.eval()
 
         for filename in filelist_test:
-            print(filename)
             ds = PartDatasetTest(filename, args.rootdir,
                             block_size=args.block_size,
                             npoints= args.npoints,
@@ -636,15 +705,13 @@ def main():
                 for pts, features, indices in t:
                     
                     features = features.cuda()
-                    #print(features)
-                    #print(pts)
+
                     pts = pts.cuda()
 
                     point_features = FGNet(features, pts)
-                    outputs = dis1(features, point_features)
+                    outputs_1, outputs_2 = dis(features, point_features)
 
-                    # outputs,_ = net(features, pts)
-                    # print(outputs)
+                    outputs = torch.add(outputs_1, outputs_2)/2
                     outputs_np = outputs.cpu().numpy().reshape((-1, N_CLASSES))
                     
                     scores[indices.cpu().numpy().ravel()] += outputs_np

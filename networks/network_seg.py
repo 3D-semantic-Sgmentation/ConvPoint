@@ -687,6 +687,55 @@ class SegBig_Dis(nn.Module):
 
         return xout, xout2
 
+class SegBig_PointDAN_Dis(nn.Module):
+    def __init__(self, input_channels, output_channels, dimension=3, args={}):
+        super(SegBig_PointDAN_Dis, self).__init__()
+
+        n_centers = 16
+        pl = 64
+
+        self.fcout = nn.Linear(pl + pl+64, output_channels)
+        self.fcout2 = nn.Linear(pl + pl+64, output_channels)
+
+        # self.linear1 = nn.Linear(pl + pl, 512, bias=False)
+        # self.bn6 = nn.BatchNorm1d(512)
+        # self.dp1 = nn.Dropout(p=0.5)
+        # self.linear2 = nn.Linear(512, 256)
+        # self.bn7 = nn.BatchNorm1d(256)
+        # self.dp2 = nn.Dropout(p=0.5)
+        # self.linear3 = nn.Linear(256, output_channels)
+
+        if "drop" in args:
+            print("Model with dropout")
+            self.drop = nn.Dropout(args.drop)
+        else:
+            self.drop = nn.Dropout(0.0)
+
+
+    def forward(self, x, x0d, return_features=False):
+
+        xout = x0d
+        xout = self.drop(xout)
+        xout = xout.view(-1, xout.size(2))
+        xout = self.fcout(xout)
+        xout = xout.view(x.size(0), -1, xout.size(1))
+
+        # classification result
+        xout2 = x0d
+        xout2 = self.drop(xout2)
+        xout2 = xout2.view(-1, xout2.size(2))
+        xout2 = self.fcout2(xout2)
+        xout2 = xout2.view(x.size(0), -1, xout2.size(1))
+
+        # xout3 = F.leaky_relu(self.bn6(self.linear1(xout2)), negative_slope=0.2)
+        # xout3 = self.dp1(xout3)
+        # xout4 = F.leaky_relu(self.bn7(self.linear2(xout3)), negative_slope=0.2)
+        # xout4 = self.dp2(xout4)
+        # xout5 = self.linear3(xout4)
+        # xout5 = xout5.view(x.size(0), -1, xout.size(1))
+
+
+        return xout, xout2
 
 
 class Domain_Dis(nn.Module):
@@ -706,7 +755,7 @@ class Domain_Dis(nn.Module):
         self.fcout4 = nn.Linear(512, 1)
         self.soft=nn.LogSoftmax(dim=1)
 
-        self.fcout5 = nn.Linear(pl + pl, output_channels)
+        self.fcout = nn.Linear(pl + pl, output_channels)
 
         if "drop" in args:
             print("Model with dropout")
@@ -721,7 +770,7 @@ class Domain_Dis(nn.Module):
         xout = x0d
         xout = self.drop(xout)
         xout = xout.view(-1, xout.size(2))
-        xout = self.fcout5(xout)
+        xout = self.fcout(xout)
         xout = xout.view(x.size(0), -1, xout.size(1))
 
 

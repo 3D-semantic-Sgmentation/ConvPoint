@@ -14,7 +14,8 @@ from datetime import datetime
 import os
 import random
 from tqdm import tqdm
-import torch.nn as nn
+import itertools    
+
 
 import torch
 import torch.utils.data
@@ -23,11 +24,20 @@ from torchvision import transforms
 
 from sklearn.metrics import confusion_matrix
 import time
+from torch.utils.data import TensorDataset, ConcatDataset
+import logging
 
 # import convpoint.knn.lib.python.nearest_neighbors as nearest_neighbors
 
 from PIL import Image
+torch.cuda.empty_cache()
+import gc
+from torch.optim import lr_scheduler
 
+gc.collect()
+torch.cuda.memory_summary(device=None, abbreviated=False)
+torch.cuda.empty_cache()
+print(torch.cuda.memory_allocated(device="cuda:0"))
 class bcolors:
     HEADER = '\033[95m'
     OKBLUE = '\033[94m'
@@ -79,7 +89,8 @@ class PartDataset():
                     iteration_number = None,
                     block_size=8,
                     npoints = 8192,
-                    nocolor=True):
+                    nocolor=True,
+                    transfer=False):
 
         self.folder = folder
         self.training = training
@@ -90,6 +101,7 @@ class PartDataset():
         self.npoints = npoints
         self.iterations = iteration_number
         self.verbose = False
+        self.transfer = transfer
 
         
         self.transform = transforms.ColorJitter(
@@ -151,6 +163,11 @@ class PartDataset():
         fts = torch.from_numpy(fts).float()
         lbs = torch.from_numpy(lbs).long()
 
+        # if self.transfer==True:
+        #     clabel = torch.from_numpy(np.zeros(lbs.shape[0])).float()
+        # if self.transfer==False:
+        #     clabel = torch.from_numpy(np.ones(lbs.shape[0])).float()
+
         return pts, fts, lbs
 
     def __len__(self):
@@ -185,7 +202,7 @@ class PartDatasetTest():
         self.pts = self.pts.astype(np.float)*step
 
     def __getitem__(self, index):
-        index = random.randint(0, len(self.pts)-1)
+        # index = random.randint(0, len(self.pts)-1)
         # get the data
         mask = self.compute_mask(self.pts[index], self.bs)
         pts = self.xyzrgb[mask]
@@ -220,167 +237,310 @@ class PartDatasetTest():
 
 
 def get_model(model_name, input_channels, output_channels, args):
-
     if model_name == "SegBig":
-        if args.finetuning:
-            from networks.network_seg import SegBig_FineTunning as Net
-            return Net(input_channels, output_channels)
         from networks.network_seg import SegBig as Net
         return Net(input_channels, output_channels, args=args)
-    else:
-        if args.finetuning:
-            from networks.network_seg import SegSmall_FineTuning as Net
-            return Net(input_channels, output_channels)
+    elif model_name == "SegSmall":
         from networks.network_seg import SegSmall as Net
         return Net(input_channels, output_channels)
+    elif model_name == "SegBig_GAN":
+        from networks.network_seg import SegBig_FG as FGNet
+        from networks.network_seg import SegBig_Dis as DisNet
+        return FGNet(input_channels, output_channels), DisNet(input_channels, output_channels)
+    elif model_name == "Gan":
+        from networks.network_seg import SegSmall_Features_Generator as GenNet
+        from networks.network_seg import SegSmall_Features_Discriminotor as DisNet
+        return GenNet(input_channels, output_channels), DisNet(input_channels, output_channels)
+    elif model_name == "SegBig_Domain":
+        from networks.network_seg import SegBig_FG as FGNet
+        from networks.network_seg import Domain_Dis as Dis
+        return FGNet(input_channels, output_channels), Dis(output_channels)
+        
+    
+class TqdmLoggingHandler(logging.Handler):
+    def __init__(self, level=logging.NOTSET):
+        super().__init__(level)
 
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            tqdm.write(msg)
+            self.flush()
+        except Exception:
+            self.handleError(record)  
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--rootdir', '-s', help='Path to data folder')
     parser.add_argument("--savedir", type=str, default="./results")
-    parser.add_argument('--block_size', help='Block size', type=float, default=16)
-    parser.add_argument("--epochs", type=int, default=200)
+    parser.add_argument('--block_size', help='Block size', type=float, default=24)
+    parser.add_argument("--epochs", type=int, default=500)
     parser.add_argument("--batch_size", "-b", type=int, default=8)
     parser.add_argument("--iter", "-i", type=int, default=1200)
     parser.add_argument("--npoints", "-n", type=int, default=8192)
     parser.add_argument("--threads", type=int, default=2)
     parser.add_argument("--nocolor",default=True)
     parser.add_argument("--test", action="store_true")
-    parser.add_argument("--finetuning", action="store_true")
     parser.add_argument("--savepts", action="store_true")
+    parser.add_argument("--continuetrain", action="store_true")
+    parser.add_argument("--finetuning", action="store_true")
     parser.add_argument("--test_step", default=0.8, type=float)
-    parser.add_argument("--model", default="SegBig", type=str)
+    parser.add_argument("--model", default="SegBig_Domain", type=str)
     parser.add_argument("--drop", default=0.5, type=float)
+    parser.add_argument("--lr", type=float, default=1e-4, help="adam: learning rate")
+    parser.add_argument("--b1", type=float, default=0.5, help="adam: decay of first order momentum of gradient")
+    parser.add_argument("--b2", type=float, default=0.999, help="adam: decay of first order momentum of gradient")
+    
     args = parser.parse_args()
 
     time_string = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
-    root_folder = os.path.join(args.savedir, "{}_{}_finetuning_linearlayer_nocolor{}_drop{}_{}".format(
+    
+    root_folder = os.path.join(args.savedir, "{}_{}_nocolor{}_drop{}_{}".format(
             args.model, args.npoints, args.nocolor, args.drop, time_string))
 
     filelist_train=[
-        # "bildstein_station1_xyz_intensity_rgb_voxels.npy",
-        # "bildstein_station3_xyz_intensity_rgb_voxels.npy",
-        # "domfountain_station1_xyz_intensity_rgb_voxels.npy",
-        # "domfountain_station3_xyz_intensity_rgb_voxels.npy",
-        # "neugasse_station1_xyz_intensity_rgb_voxels.npy",
-        # "sg27_station1_intensity_rgb_voxels.npy",
-        # "sg27_station2_intensity_rgb_voxels.npy",
-        # "untermaederbrunnen_station1_xyz_intensity_rgb_voxels.npy",
-        'mls2016_8class_20cm_ascii_area1_1_1_voxels.npy',
-        # "L003_1_voxels.npy",
+        "mls2016_8class_20cm_ascii_area1_voxels.npy",
+        "mls2016_8class_20cm_ascii_area2_voxels.npy",
+        "mls2016_8class_20cm_ascii_area3_voxels.npy",
     ]
+    filelist_train_trans=[
+        "bildstein_station1_xyz_intensity_rgb_voxels.npy",
+        "bildstein_station3_xyz_intensity_rgb_voxels.npy",
+        "domfountain_station1_xyz_intensity_rgb_voxels.npy",
+        "domfountain_station3_xyz_intensity_rgb_voxels.npy",
+        "neugasse_station1_xyz_intensity_rgb_voxels.npy",
+        "sg27_station1_intensity_rgb_voxels.npy",
+        "sg27_station5_intensity_rgb_voxels.npy",
+        "untermaederbrunnen_station1_xyz_intensity_rgb_voxels.npy",
+        "bildstein_station5_xyz_intensity_rgb_voxels.npy",
+        "domfountain_station2_xyz_intensity_rgb_voxels.npy",
+        "sg27_station4_intensity_rgb_voxels.npy",
+        "sg27_station2_intensity_rgb_voxels.npy",
+        "sg27_station9_intensity_rgb_voxels.npy",
+        "sg28_station4_intensity_rgb_voxels.npy",
+        "untermaederbrunnen_station3_xyz_intensity_rgb_voxels.npy",
+    ]
+    
 
     filelist_val=[
         #"area3_voxels.npy",
-        'mls2016_8class_20cm_ascii_area1_1_2_voxels.npy',
-        'mls2016_8class_20cm_ascii_area1_2_voxels.npy',
+        "mls2016_8class_20cm_ascii_area1_voxels.npy",
         "mls2016_8class_20cm_ascii_area2_voxels.npy",
-        'mls2016_8class_20cm_ascii_area3_voxels.npy',
-        # "L001_voxels.npy",
-        # "L002_voxels.npy",
-        # "L003_2_voxels.npy",
-        # "L004_voxels.npy",
+        "mls2016_8class_20cm_ascii_area3_voxels.npy",
+        #"mls2016_8class_20cm_ascii_area1_voxels.npy",
     ]
-
-
-    filelist_test = [
-
-        ]
-
-    N_CLASSES = 8
-    print(filelist_train)
+    filelist_test=[
+        #"area3_voxels.npy",
+        "mls2016_8class_20cm_ascii_area1_voxels.npy",
+        "mls2016_8class_20cm_ascii_area2_voxels.npy",
+        "mls2016_8class_20cm_ascii_area3_voxels.npy",
+        #"mls2016_8class_20cm_ascii_area1_voxels.npy",
+    ]
+    print(filelist_train,filelist_train_trans)
     print(filelist_val)
+
+    N_CLASSES= 8
+
+    print(args.model)
     # create model
     print("Creating the network...", end="", flush=True)
     if args.nocolor:
-        net = get_model(args.model, input_channels=1, output_channels=N_CLASSES, args=args)
+        FGNet, dis = get_model(args.model, input_channels=1, output_channels=N_CLASSES, args=args)
     else:
-        net = get_model(args.model, input_channels=3, output_channels=N_CLASSES, args=args)
+        FGNet, dis = get_model(args.model, input_channels=3, output_channels=N_CLASSES, args=args)
     if args.test:
-        net.load_state_dict(torch.load(os.path.join(args.savedir, "state_dict.pth")))
+        FGNet.load_state_dict(torch.load(os.path.join(args.savedir, "FGNet_state_dict.pth")))
+        dis.load_state_dict(torch.load(os.path.join(args.savedir, "dis_state_dict.pth")))
+
+    if args.continuetrain:
+        FGNet.load_state_dict(torch.load(os.path.join(args.savedir, "FGNet_state_dict.pth")))
+        dis.load_state_dict(torch.load(os.path.join(args.savedir, "dis_state_dict.pth")))
+        print("reload previous model")
+
     if args.finetuning:
-        net.load_state_dict(torch.load(os.path.join(args.savedir, "state_dict.pth")))
-        print("loaded previous model")
+        # ---------------------
+        #  Load pretrained model
+        # --------------------
+        pretrained_dict = torch.load(os.path.join(args.savedir, "state_dict.pth"))
 
-    layers = []
-    for name, param in net.named_parameters():
-        print(name,param.requires_grad)
-        layers.append([name,param.requires_grad])
-    
-    # net.fcout = nn.Linear(128,8,bias=True)
-    # print(net.fcout)
-    # print("Finetuning")
+        FGNet_dict = FGNet.state_dict()
+        # for k, v in pretrained_dict.items():
+        #     if k in FGNet_dict:
+        #         print(k)
+        # 1. filter out unnecessary keys
+        pretrained_dict_gen = {k: v for k, v in pretrained_dict.items() if k in FGNet_dict}
+        # 2. overwrite entries in the existing state dict
+        FGNet_dict.update(pretrained_dict_gen)
 
-    net.cuda()
+        FGNet.load_state_dict(FGNet_dict)
+        print("start load dis model")
+
+        # dis_dict = dis.state_dict()
+        # for k, v in pretrained_dict.items():
+        #     if k in dis_dict:
+        #         print(k)
+        # # 1. filter out unnecessary keys
+        # pretrained_dict_gan = {k: v for k, v in pretrained_dict.items() if k in dis_dict}
+        # # 2. overwrite entries in the existing state dict
+        # dis_dict.update(pretrained_dict_gan)
+        # dis.load_state_dict(dis_dict)
+        # print("load pretrained models")
+        
+    FGNet.cuda()
+    dis.cuda()  # class
     print("Done")
+    print("discriminator output 1 class(Linear)")
+    print("Gan Model")
+
+
+
 
     ##### TRAIN
     if not args.test:
-                
-
         print("Create the datasets...", end="", flush=True)
 
         ds = PartDataset(filelist_train, args.rootdir,
                                 training=True, block_size=args.block_size,
+                                iteration_number=args.batch_size*args.iter,  #16000
+                                npoints=args.npoints,
+                                nocolor=args.nocolor,
+                                transfer=False)
+
+        ds_transfer = PartDataset(filelist_train_trans, args.rootdir,
+                                training=True, block_size=args.block_size,
                                 iteration_number=args.batch_size*args.iter,
                                 npoints=args.npoints,
-                                nocolor=args.nocolor)
+                                nocolor=args.nocolor,
+                                transfer=True)
+        
         train_loader = torch.utils.data.DataLoader(ds, batch_size=args.batch_size, shuffle=True,
                                             num_workers=args.threads)
 
+        train_trans_loader = torch.utils.data.DataLoader(ds_transfer, batch_size=args.batch_size, shuffle=True,
+                                            num_workers=args.threads)
         val = PartDataset(filelist_val, args.rootdir,
                                 training=True, block_size=args.block_size,
                                 iteration_number=args.batch_size*args.iter,
                                 npoints=args.npoints,
-                                nocolor=args.nocolor)
+                                nocolor=args.nocolor,
+                                transfer=True)
         val_loader = torch.utils.data.DataLoader(val, batch_size=args.batch_size, shuffle=True,
                                             num_workers=args.threads)
         print("Done")
 
+        print("Create optimizer...", end="", flush=True)        
+        optimizer_dis = torch.optim.Adam(dis.parameters(), lr=args.lr*2)  # Discriminator use large learning rate
+        optimizer_FGNet = torch.optim.Adam(FGNet.parameters(), lr=args.lr)  # Discriminator use large learning rate
+        scheduler = lr_scheduler.StepLR(optimizer_dis, 80, gamma=0.1, last_epoch=-1)
 
-        print("Create optimizer...", end="", flush=True)
-        optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, net.parameters()), lr=1e-5)
-        # optimizer = torch.optim.Adam(net.parameters(), lr=1e-5)
         print("Done")
+        
+        # update all para in one optimize is not good
 
-
-                # create the root folder
+        # create the root folder
         os.makedirs(root_folder, exist_ok=True)
+        
         # create the log file
         logs = open(os.path.join(root_folder, "log.txt"), "w")
-        logs.write(str(layers))
+        logs.write(str(FGNet))
+        logs.flush()
         logs.write(str(filelist_train))
         logs.write(str(filelist_val))
-        
-        logs.write(str(optimizer))
+        logs.write(str(args))
+        logs.flush()
+        logs.write(str(optimizer_FGNet))
+
         logs.flush()
 
         best_iou = 0.0
+
+        
+
         # iterate over epochs
         for epoch in range(args.epochs):
 
             #######
             # training
-            net.train()
+            FGNet.train()
+            dis.train()
 
             train_loss = 0
-            cm = np.zeros((N_CLASSES, N_CLASSES))
-            t = tqdm(train_loader, ncols=100, desc="Epoch {}".format(epoch))
+            val_loss = 0
             
-            for pts, features, seg in t:
 
-                features = features.cuda()
-                pts = pts.cuda()
+            cm = np.zeros((N_CLASSES, N_CLASSES))
+            t = tqdm(zip(train_loader,train_trans_loader), ncols=100, desc="Epoch {}".format(epoch))
+
+            for (pts, features, seg ),(pts_trans, features_trans, seg_trans) in t:
+                # ---------------------
+                #  Train Generate Semantic3D
+                # --------------------
+
+                features_trans = features_trans.cuda() # n*3
+                pts_trans = pts_trans.cuda()  # n*3
+                seg_trans = seg_trans.cuda()
+                # clabel_trans = clabel_trans.cuda()
+
+                optimizer_dis.zero_grad()
+
+                point_features_trans = FGNet(features_trans, pts_trans)
+                outputs_trans, domain_class_trans = dis(features_trans, point_features_trans)
+
+                clabel_false = torch.zeros(domain_class_trans.size(0)).cuda()
+
+                seg_loss_trans = F.cross_entropy(outputs_trans.view(-1, N_CLASSES), seg_trans.view(-1))
+                domain_loss_trans = torch.nn.NLLLoss()(domain_class_trans.flatten(), clabel_false.long())
+
+                features = features.cuda() # n*3
+                pts = pts.cuda()  # n*3
                 seg = seg.cuda()
+
+                point_features = FGNet(features, pts)
+                outputs,domain_class = dis(features, point_features)
+
+                clabel_true = torch.ones(domain_class.size(0)).cuda()
                 
-                optimizer.zero_grad()
-                outputs = net(features, pts)
-                loss =  F.cross_entropy(outputs.view(-1, N_CLASSES), seg.view(-1))
-                loss.backward()
-                optimizer.step()
+                domain_loss = torch.nn.NLLLoss()(domain_class.flatten(), clabel_true.long())
+
+                loss_dis = seg_loss_trans+(domain_loss_trans+domain_loss)
+
+                loss_dis.backward()
+                optimizer_dis.step()
+                # ---------------------
+                #  Train Feature Generator TUMMLS
+                # --------------------
+
+                optimizer_FGNet.zero_grad()
+
+                point_features_trans = FGNet(features_trans, pts_trans)
+                outputs_trans, domain_class_trans = dis(features_trans, point_features_trans)
+
+
+                clabel_true = torch.ones(domain_class_trans.size(0)).cuda()
+
+                seg_loss_trans = F.cross_entropy(outputs_trans.view(-1, N_CLASSES), seg_trans.view(-1))
+                domain_loss_trans = torch.nn.NLLLoss()(domain_class_trans.flatten(), clabel_true.long())
+
+                features = features.cuda() # n*3
+                pts = pts.cuda()  # n*3
+                seg = seg.cuda()
+
+                point_features = FGNet(features, pts)
                 
+                outputs,domain_class = dis(features, point_features)
+
+                clabel_false = torch.zeros(domain_class.size(0)).cuda()
+                domain_loss = torch.nn.NLLLoss()(domain_class.flatten(), clabel_false.long())
+
+
+                loss_FGNet = seg_loss_trans+(domain_loss+domain_loss_trans)
+                loss_FGNet.backward()
+                optimizer_FGNet.step()
+                
+                # ---------------------
+                #  Loss and Evaluation
+                # --------------------                
                 output_np = np.argmax(outputs.cpu().detach().numpy(), axis=2).copy()
                 target_np = seg.cpu().numpy().copy()   # (16, 8192)
 
@@ -391,35 +551,37 @@ def main():
                 aa = f"{metrics.stats_accuracy_per_class(cm)[0]:.5f}"
                 iou = f"{metrics.stats_iou_per_class(cm)[0]:.5f}"
 
-                train_loss += loss.detach().cpu().item()
-
-                t.set_postfix(OA=wblue(oa), AA=wblue(aa), IOU=wblue(iou), LOSS=wblue(f"{train_loss/cm.sum():.4e}"))
-
-
+                train_loss += seg_loss_trans.detach().cpu().item()
+                #trans_loss += loss_t.detach().cpu().item()
+                    
+                t.set_postfix(OA=wblue(oa), AA=wblue(aa), IOU=wblue(iou), Train_LOSS=wblue(f"{train_loss/cm.sum():.4e}"))
 
             # write the logs
             logs.write(f"{epoch} {oa} {aa} {iou}\n")
             logs.flush()
 
             if epoch%2==0:
+
+                FGNet.eval()
+                dis.eval()
+
                 with torch.no_grad(): 
-                    net.eval()
-                    cm   = np.zeros((N_CLASSES, N_CLASSES))
+          
+                    cm = np.zeros((N_CLASSES, N_CLASSES))
                     t = tqdm(val_loader, ncols=100, desc="Epoch {}".format(epoch))
-                    val_loss = 0
+                    
                     for pts, features, seg in t:
 
                         features = features.cuda()
                         pts = pts.cuda()
                         seg = seg.cuda()
-
-                        outputs = net(features, pts)
-
-                        loss =  F.cross_entropy(outputs.view(-1, N_CLASSES), seg.view(-1))
-                        val_loss += loss.detach().cpu().item()
+                        
+                        point_features = FGNet(features, pts)
+                        outputs,_ = dis(features, point_features)
 
                         output_np = np.argmax(outputs.cpu().detach().numpy(), axis=2).copy()
                         target_np = seg.cpu().numpy().copy()   # (16, 8192)
+
                         cm_ = confusion_matrix(target_np.ravel(), output_np.ravel(), labels=list(range(N_CLASSES)))
                         cm += cm_
 
@@ -427,25 +589,33 @@ def main():
                         aa = f"{metrics.stats_accuracy_per_class(cm)[0]:.5f}"
                         iou = f"{metrics.stats_iou_per_class(cm)[0]:.5f}"
 
-                        t.set_postfix(OA=wblue(oa), AA=wblue(aa), IOU=wblue(iou), LOSS=wblue(f"{val_loss/cm.sum():.4e}"))
                         iouf = metrics.stats_iou_per_class(cm)[0]          
+
+                        loss =  F.cross_entropy(outputs.view(-1, N_CLASSES), seg.view(-1))
+                        val_loss += loss.detach().cpu().item()
+
+                        t.set_postfix(OA=wblue(oa), AA=wblue(aa), IOU=wblue(iou), LOSS=wblue(f"{val_loss/cm.sum():.4e}"))
 
                     if iouf>best_iou:
                         best_iou = iouf
                         # save the model
-                        print("when iou equals ",iou)
-                        torch.save(net.state_dict(), os.path.join(root_folder, "state_dict.pth"))
-                    logs.write(f"{epoch} {oa} {aa} {iou}\n")
-                    logs.flush()
-                    
+                        print("when iou equals ",iou,"save at",os.path.join(root_folder, "state_dict.pth"))
+                        torch.save(FGNet.state_dict(), os.path.join(root_folder, "FGNet_state_dict.pth"))
+                        torch.save(dis.state_dict(), os.path.join(root_folder, "dis_state_dict.pth"))
 
+                        
+                    logs.write(f"{epoch} {oa} {aa} {iou} {val_loss}\n")
+                    logs.flush()
 
 
         logs.close()
 
     ##### TEST
     else:
-        net.eval()
+        # semGen.eval()
+        FGNet.eval()
+        dis.eval()
+
         for filename in filelist_test:
             print(filename)
             ds = PartDatasetTest(filename, args.rootdir,
@@ -468,8 +638,12 @@ def main():
                     #print(features)
                     #print(pts)
                     pts = pts.cuda()
-                    outputs = net(features, pts)
-                    print(outputs)
+
+                    point_features = FGNet(features, pts)
+                    outputs,_ = dis(features, point_features)
+
+                    # outputs,_ = net(features, pts)
+                    # print(outputs)
                     outputs_np = outputs.cpu().numpy().reshape((-1, N_CLASSES))
                     
                     scores[indices.cpu().numpy().ravel()] += outputs_np
