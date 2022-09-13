@@ -305,21 +305,21 @@ def main():
         "mls2016_8class_20cm_ascii_area3_voxels.npy",
     ]
     filelist_train_trans=[
-        "bildstein_station1_xyz_intensity_rgb_voxels.npy",
-        "bildstein_station3_xyz_intensity_rgb_voxels.npy",
+        # "bildstein_station1_xyz_intensity_rgb_voxels.npy",
+        #"bildstein_station3_xyz_intensity_rgb_voxels.npy",
+        # "bildstein_station5_xyz_intensity_rgb_voxels.npy",
         "domfountain_station1_xyz_intensity_rgb_voxels.npy",
+        "domfountain_station2_xyz_intensity_rgb_voxels.npy",
         "domfountain_station3_xyz_intensity_rgb_voxels.npy",
         "neugasse_station1_xyz_intensity_rgb_voxels.npy",
-        "sg27_station1_intensity_rgb_voxels.npy",
-        "sg27_station5_intensity_rgb_voxels.npy",
-        "untermaederbrunnen_station1_xyz_intensity_rgb_voxels.npy",
-        "bildstein_station5_xyz_intensity_rgb_voxels.npy",
-        "domfountain_station2_xyz_intensity_rgb_voxels.npy",
-        "sg27_station4_intensity_rgb_voxels.npy",
+        # "untermaederbrunnen_station1_xyz_intensity_rgb_voxels.npy",
+        # "untermaederbrunnen_station3_xyz_intensity_rgb_voxels.npy",
+        # "sg27_station1_intensity_rgb_voxels.npy",
         "sg27_station2_intensity_rgb_voxels.npy",
+        # "sg27_station5_intensity_rgb_voxels.npy",  
+        # "sg27_station4_intensity_rgb_voxels.npy",
         "sg27_station9_intensity_rgb_voxels.npy",
-        "sg28_station4_intensity_rgb_voxels.npy",
-        "untermaederbrunnen_station3_xyz_intensity_rgb_voxels.npy",
+        # "sg28_station4_intensity_rgb_voxels.npy",
     ]
     
 
@@ -485,6 +485,7 @@ def main():
                 optimizer_dis.zero_grad()
 
                 point_features_trans = FGNet(features_trans, pts_trans)
+
                 outputs_trans, domain_class_trans = dis(features_trans, point_features_trans)
 
                 clabel_false = torch.zeros(domain_class_trans.size(0)).cuda()

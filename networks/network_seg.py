@@ -335,8 +335,8 @@ class SegBig_FineTunning(nn.Module):
         self.bn6 = nn.BatchNorm1d(2*pl)
 
 
-        # for p in self.parameters():
-        #     p.requires_grad = False
+        for p in self.parameters():
+            p.requires_grad = False
 
         self.cv5d = PtConv(2*pl, 2*pl, n_centers, dimension, use_bias=False)
         self.cv4d = PtConv(4*pl, 2*pl, n_centers, dimension, use_bias=False)
@@ -633,7 +633,7 @@ class SegBig_FG(nn.Module):
         # xout = self.fcout(xout)
         # xout = xout.view(x.size(0), -1, xout.size(1))
 
-        return x0d
+        return x0d # , x6
 
 
 

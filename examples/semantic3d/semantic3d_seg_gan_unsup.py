@@ -84,6 +84,12 @@ def rotate_point_cloud_z(batch_data):
                                 [0, 0, 1],])
     return np.dot(batch_data, rotation_matrix)
 
+def discrepancy(out1, out2):
+    """discrepancy loss"""
+    out = torch.mean(torch.abs(F.softmax(out1, dim=-1) - F.softmax(out2, dim=-1)))
+    return out
+
+
 # Part dataset only for training / validation
 class PartDataset():
 
@@ -273,9 +279,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--rootdir', '-s', help='Path to data folder')
     parser.add_argument("--savedir", type=str, default="./results")
-    parser.add_argument('--block_size', help='Block size', type=float, default=30)
+    parser.add_argument('--block_size', help='Block size', type=float, default=16)
     parser.add_argument("--epochs", type=int, default=300)
-    parser.add_argument("--batch_size", "-b", type=int, default=10)
+    parser.add_argument("--batch_size", "-b", type=int, default=8)
     parser.add_argument("--iter", "-i", type=int, default=1200)
     parser.add_argument("--npoints", "-n", type=int, default=8192)
     parser.add_argument("--threads", type=int, default=2)
@@ -284,7 +290,7 @@ def main():
     parser.add_argument("--savepts", action="store_true")
     parser.add_argument("--continuetrain", action="store_true")
     parser.add_argument("--finetuning", action="store_true")
-    parser.add_argument("--test_step", default=1, type=float)
+    parser.add_argument("--test_step", default=0.8, type=float)
     parser.add_argument("--model", default="SegBig_GAN", type=str)
     parser.add_argument("--drop", default=0.5, type=float)
     parser.add_argument("--lr", type=float, default=1e-4, help="adam: learning rate")
@@ -305,21 +311,22 @@ def main():
         "mls2016_8class_20cm_ascii_area3_voxels.npy",
     ]
     filelist_train_trans=[
-        "bildstein_station1_xyz_intensity_rgb_voxels.npy",
-        "bildstein_station3_xyz_intensity_rgb_voxels.npy",
+        # "bildstein_station1_xyz_intensity_rgb_voxels.npy",
+        #"bildstein_station3_xyz_intensity_rgb_voxels.npy",
+        # "bildstein_station5_xyz_intensity_rgb_voxels.npy",
         "domfountain_station1_xyz_intensity_rgb_voxels.npy",
+        "domfountain_station2_xyz_intensity_rgb_voxels.npy",
         "domfountain_station3_xyz_intensity_rgb_voxels.npy",
         "neugasse_station1_xyz_intensity_rgb_voxels.npy",
-        "sg27_station1_intensity_rgb_voxels.npy",
-        "sg27_station5_intensity_rgb_voxels.npy",
-        "untermaederbrunnen_station1_xyz_intensity_rgb_voxels.npy",
-        "bildstein_station5_xyz_intensity_rgb_voxels.npy",
-        "domfountain_station2_xyz_intensity_rgb_voxels.npy",
-        "sg27_station4_intensity_rgb_voxels.npy",
+        # "untermaederbrunnen_station1_xyz_intensity_rgb_voxels.npy",
+        # "untermaederbrunnen_station3_xyz_intensity_rgb_voxels.npy",
+        # "sg27_station1_intensity_rgb_voxels.npy",
         "sg27_station2_intensity_rgb_voxels.npy",
+        # "sg27_station5_intensity_rgb_voxels.npy",  
+        # "sg27_station4_intensity_rgb_voxels.npy",
         "sg27_station9_intensity_rgb_voxels.npy",
-        "sg28_station4_intensity_rgb_voxels.npy",
-        "untermaederbrunnen_station3_xyz_intensity_rgb_voxels.npy",
+        # "sg28_station4_intensity_rgb_voxels.npy",
+        
     ]
     
 
@@ -486,7 +493,7 @@ def main():
                 # --------------------
                 optimizer_full.zero_grad()
 
-                point_features_trans = FGNet(features_trans, pts_trans)
+                point_features_trans, global_feature_trans = FGNet(features_trans, pts_trans)
                 outputs_trans_1, outputs_trans_2 = dis(features_trans, point_features_trans)
 
                 seg_loss_trans_1 = F.cross_entropy(outputs_trans_1.view(-1, N_CLASSES), seg_trans.view(-1))
@@ -504,15 +511,20 @@ def main():
                 # --------------------
                 optimizer_dis.zero_grad()
 
-                point_features_trans = FGNet(features_trans, pts_trans)
+                point_features_trans, global_feature_trans = FGNet(features_trans, pts_trans)
                 outputs_trans_1, outputs_trans_2 = dis(features_trans, point_features_trans)
+
+
+                point_features, global_feature = FGNet(features, pts)
+                outputs_1, outputs_2 = dis(features, point_features)
 
                 seg_loss_trans_1 = F.cross_entropy(outputs_trans_1.view(-1, N_CLASSES), seg_trans.view(-1))
                 seg_loss_trans_2 = F.cross_entropy(outputs_trans_2.view(-1, N_CLASSES), seg_trans.view(-1))
 
+                loss_adv = discrepancy(outputs_1, outputs_2)
                 adv_loss = F.l1_loss(outputs_trans_1, outputs_trans_2)
 
-                loss_trans = seg_loss_trans_1+seg_loss_trans_2-adv_loss
+                loss_trans = seg_loss_trans_1+seg_loss_trans_2-adv_loss-loss_adv
 
                 loss_trans.backward()
 
@@ -525,17 +537,18 @@ def main():
 
                 optimizer_FGNet.zero_grad()
 
-                point_features = FGNet(features, pts)
+                point_features, global_feature = FGNet(features, pts)
                 outputs_1, outputs_2 = dis(features, point_features)
-                adv_loss = F.l1_loss(outputs_1, outputs_2)
-
-                point_features_trans = FGNet(features_trans, pts_trans)
+                loss_adv = discrepancy(outputs_1, outputs_2)
+                
+                point_features_trans,global_feature_trans = FGNet(features_trans, pts_trans)
                 outputs_trans_1, outputs_trans_2 = dis(features_trans, point_features_trans)
 
                 seg_loss_trans_1 = F.cross_entropy(outputs_trans_1.view(-1, N_CLASSES), seg_trans.view(-1))
                 seg_loss_trans_2 = F.cross_entropy(outputs_trans_2.view(-1, N_CLASSES), seg_trans.view(-1))
+                adv_loss = F.l1_loss(outputs_trans_1, outputs_trans_2)
 
-                loss = seg_loss_trans_1 + seg_loss_trans_2 + args.beta*adv_loss
+                loss = seg_loss_trans_1 + seg_loss_trans_2 + args.beta*(adv_loss+loss_adv) 
                 loss.backward()
                 optimizer_FGNet.step()
 
@@ -563,7 +576,7 @@ def main():
                  # , Adv_LOSS=wblue(f"{adv_losses/cm.sum():.4e}")
 
             # write the logs
-            logs.write(f"{epoch} {oa} {aa} {iou} {train_loss} \n" + " train")
+            logs.write(f"{epoch} {oa} {aa} {iou} {train_loss} "+ " train"+"\n" )
             logs.flush()
 
             #draw_features(point_features_trans.cpu().detach().numpy().reshape(-1, point_features_trans.shape[2])[0:1000], seg_trans.cpu().detach().numpy().reshape(-1)[0:1000], title =str(epoch))
@@ -584,7 +597,7 @@ def main():
                         pts = pts.cuda()
                         seg = seg.cuda()
 
-                        point_features = FGNet(features, pts)
+                        point_features, global_feature = FGNet(features, pts)
                         outputs_1, outputs_2 = dis(features, point_features)
 
                         outputs = torch.add(outputs_1, outputs_2)/2
@@ -653,10 +666,9 @@ def main():
                 for pts, features, indices in t:
                     
                     features = features.cuda()
-
                     pts = pts.cuda()
 
-                    point_features = FGNet(features, pts)
+                    point_features,_ = FGNet(features, pts)
                     outputs_1, outputs_2 = dis(features, point_features)
 
                     outputs = torch.add(outputs_1, outputs_2)/2

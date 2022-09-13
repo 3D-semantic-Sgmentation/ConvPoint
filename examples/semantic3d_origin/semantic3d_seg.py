@@ -346,7 +346,7 @@ def main():
                 
                 optimizer.zero_grad()
                 outputs = net(features, pts)
-                loss =  F.cross_entropy(outputs.view(-1, N_CLASSES), seg.view(-1))
+                loss =  F.cross_entropy(outputs.view(-1, N_CLASSES), seg.view(-1)) # Softmax is inside
                 loss.backward()
                 optimizer.step()
 

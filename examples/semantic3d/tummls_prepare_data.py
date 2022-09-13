@@ -32,8 +32,12 @@ def wred(str):
 
 
 filelist_train=[
-        "mls2016_8class_20cm_ascii_area1_1_1",
-        "mls2016_8class_20cm_ascii_area1_1_2",
+    "Lille1_1",
+    "Lille1_2",
+    "Lille2",
+    "Paris",
+        # "mls2016_8class_20cm_ascii_area1_1_1",
+        # "mls2016_8class_20cm_ascii_area1_1_2",
         # "area1",
         # "area2",
         # "area3",

@@ -242,7 +242,7 @@ def calculate_fisher(net, train_loader):
     Calculate Fisher Information for different parameters
     '''
     max_grad_norm = 1.0
-    reserve_p = 0.4
+    reserve_p = 0.5
     gradient_mask = dict()
     model = net
     model.train()
@@ -334,7 +334,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--rootdir', '-s', help='Path to data folder')
     parser.add_argument("--savedir", type=str, default="./results")
-    parser.add_argument('--block_size', help='Block size', type=float, default=8)
+    parser.add_argument('--block_size', help='Block size', type=float, default=16)
     parser.add_argument("--epochs", type=int, default=500)
     parser.add_argument("--batch_size", "-b", type=int, default=8)
     parser.add_argument("--iter", "-i", type=int, default=1200)
@@ -379,7 +379,10 @@ def main():
     ]
 
     filelist_test = [
-
+        'mls2016_8class_20cm_ascii_area1_1_2_voxels.npy',
+        'mls2016_8class_20cm_ascii_area1_2_voxels.npy',
+        "mls2016_8class_20cm_ascii_area2_voxels.npy",
+        'mls2016_8class_20cm_ascii_area3_voxels.npy',
         ]
 
     
@@ -446,6 +449,8 @@ def main():
         os.makedirs(root_folder, exist_ok=True)
         # create the log file
         logs = open(os.path.join(root_folder, "log.txt"), "w")
+        saved_args = locals()
+        logs.write(f"{saved_args}")
         logs.write(str(layers))
         logs.write(str(filelist_train))
         logs.write(str(filelist_val))

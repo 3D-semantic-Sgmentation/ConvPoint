@@ -10,7 +10,7 @@ python setup.py install --home="."
 ```
 Then, run the generation script:
 ```
-python semantic3d_prepare_data.py --rootdir /media/liangdao/DATA/origin_data/origin --savedir /media/liangdao/DATA/origin_data/convpoint
+python tummls_prepare_data.py --rootdir /media/liangdao/DATA/Paris_and_Lille --savedir /media/liangdao/DATA/Paris_and_Lille
 
 python semantic3d_prepare_data.py --rootdir /media/liangdao/DATA/small/area123 --savedir /media/liangdao/DATA/small/convpoint
 
@@ -28,7 +28,7 @@ python semantic3d_seg.py --rootdir /media/liangdao/DATA/segmentation/ConvPoint/d
 ```
 Sematnic3D training, area1 test
 ```
-python semantic3d_seg.py --rootdir /media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/train/pointcloud --savedir /media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/SegBig_8192_nocolorTrue_drop0.5_2022-08-20-17-52-27/SegBig_8192_nocolorTrue_drop0.5_2022-08-23-09-18-38 --test  --savepts
+python semantic3d_seg.py --rootdir /media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/train/pointcloud --savedir --test  --savepts
 ```
 
 ### Transfer
@@ -44,11 +44,14 @@ python semantic3d_seg_gan.py --rootdir /media/liangdao/DATA/segmentation/ConvPoi
 python semantic3d_seg_gan.py --rootdir /media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/train/pointcloud --savedir /media/liangdao/DATA/segmentation/ConvPoint/data/SEMANTIC3D/SegBig_nocolor/SegBig_Domain_8192_nocolorTrue_drop0.5_2022-08-01-17-55-41/SegBig_Domain_8192_nocolorTrue_drop0.5_2022-08-02-16-12-18 --test --savepts
 
 ### Fine Tuning
-python semantic3d_seg_finetuning.py --rootdir /media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/train/pointcloud --savedir /media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/SegSmall_8192_nocolorTrue_drop0.5_2022-06-12-23-54-20 --finetuning
+python semantic3d_seg_finetuning.py --rootdir /media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/train/pointcloud --savedir /media/liangdao/DATA/segmentation/ConvPoint/data/SEMANTIC3D/SegBig_nocolor/SegBig_8192_finetuning_linearlayer_nocolorTrue_drop0.5_2022-08-30-17-17-00 --finetuning
 
 python semantic3d_seg_finetuning.py --rootdir /media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/train/pointcloud --savedir /media/liangdao/DATA/segmentation/ConvPoint/data/SEMANTIC3D/SegBig_nocolor --finetuning
 
+
 ### Childtuning
+python semantic3d_seg_childtuning.py --rootdir /media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/train/pointcloud --savedir /media/liangdao/DATA/segmentation/ConvPoint/data/SEMANTIC3D/SegBig_nocolor/ --finetuning
+
 python semantic3d_seg_childtuning.py --rootdir /media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/train/pointcloud --savedir /media/liangdao/DATA/segmentation/ConvPoint/data/SEMANTIC3D/SegBig_nocolor/ --finetuning
 
 ### MMD
@@ -65,10 +68,10 @@ python semantic3d_seg_gan_reverse.py --rootdir /media/liangdao/DATA/segmentation
 ### first step:
     python semantic3d_seg_gan_unsup_step1.py --rootdir /media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/train/pointcloud --savedir /media/liangdao/DATA/segmentation/ConvPoint/data/SEMANTIC3D/SegBig_nocolor/SegBig_GAN_8192_nocolorTrue_drop0.5_2022-07-23-21-23-51 --continuetrain
 ### second Step:
-    python semantic3d_seg_gan_unsup.py --rootdir /media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/train/pointcloud --savedir /media/liangdao/DATA/segmentation/ConvPoint/data/SEMANTIC3D/SegBig_nocolor --finetuning
+    python semantic3d_seg_gan_unsup.py --rootdir /media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/train/pointcloud --savedir /media/liangdao/DATA/segmentation/ConvPoint/data/SEMANTIC3D/SegBig_nocolor/SegBig_GAN_8192_nocolorTrue_drop0.5_2022-07-23-21-23-51 --finetuning
     python semantic3d_seg_gan_unsup.py --rootdir /media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/train/pointcloud --savedir /media/liangdao/DATA/segmentation/ConvPoint/data/SEMANTIC3D/SegBig_nocolor/SegBig_GAN_8192_nocolorTrue_drop0.5_2022-07-23-21-23-51 --continuetrain
     
-    python semantic3d_seg_gan_unsup.py --rootdir /media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/train/pointcloud --savedir /media/liangdao/DATA/segmentation/ConvPoint/data/SEMANTIC3D/SegBig_nocolor/SegBig_GAN_8192_nocolorTrue_drop0.5_2022-07-23-21-23-51/SegBig_GAN_8192_nocolorTrue_drop0.5_2022-08-10-17-56-24/ --test --savepts
+    python semantic3d_seg_gan_unsup.py --rootdir /media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/train/pointcloud --savedir /media/liangdao/DATA/segmentation/ConvPoint/data/SEMANTIC3D/SegBig_nocolor/SegBig_GAN_8192_nocolorTrue_drop0.5_2022-07-23-21-23-51/SegBig_GAN_8192_nocolorTrue_drop0.5_2022-09-06-14-41-51  --test --savepts
 
 
 ## Unsup version domain loss
@@ -83,7 +86,7 @@ python semantic3d_seg_gan.py --rootdir /media/liangdao/DATA/segmentation/ConvPoi
 To predict on the test set (voxelized pointcloud):
 
 ```
-python semantic3d_seg.py --rootdir /media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/train/pointcloud --savedir /media/liangdao/DATA/segmentation/ConvPoint/data/SEMANTIC3D/SegBig_nocolor --test --savepts
+python semantic3d_seg.py --rootdir /media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/train/pointcloud --savedir /media/liangdao/DATA/segmentation/ConvPoint/data/SEMANTIC3D/SegBig_nocolor/SegBig_8192_childtuning_nocolorTrue_drop0.5_2022-08-30-17-20-24 --test --savepts
 
 
 python semantic3d_seg.py --rootdir /media/liangdao/DATA/origin_data/convpoint/test/pointcloud/ --savedir /media/liangdao/DATA/origin_data/convpoint/SegBig_8192_nocolorNone_drop0.5_2022-04-28-02-36-49 --test
