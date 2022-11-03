@@ -16,6 +16,7 @@ import os
 import random
 from tqdm import tqdm
 import itertools    
+import time
 
 
 import torch
@@ -279,9 +280,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--rootdir', '-s', help='Path to data folder')
     parser.add_argument("--savedir", type=str, default="./results")
-    parser.add_argument('--block_size', help='Block size', type=float, default=16)
-    parser.add_argument("--epochs", type=int, default=300)
-    parser.add_argument("--batch_size", "-b", type=int, default=8)
+    parser.add_argument('--block_size', help='Block size', type=float, default=16)  # thing to change
+    parser.add_argument("--epochs", type=int, default=200)
+    parser.add_argument("--batch_size", "-b", type=int, default=10)
     parser.add_argument("--iter", "-i", type=int, default=1200)
     parser.add_argument("--npoints", "-n", type=int, default=8192)
     parser.add_argument("--threads", type=int, default=2)
@@ -299,7 +300,7 @@ def main():
     parser.add_argument("--beta", type=float, default=0.001, help="adam: decay of first order momentum of gradient")
     
     args = parser.parse_args()
-
+    
     time_string = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
     
     root_folder = os.path.join(args.savedir, "{}_{}_nocolor{}_drop{}_{}".format(
@@ -311,22 +312,21 @@ def main():
         "mls2016_8class_20cm_ascii_area3_voxels.npy",
     ]
     filelist_train_trans=[
-        # "bildstein_station1_xyz_intensity_rgb_voxels.npy",
-        #"bildstein_station3_xyz_intensity_rgb_voxels.npy",
-        # "bildstein_station5_xyz_intensity_rgb_voxels.npy",
+        "bildstein_station1_xyz_intensity_rgb_voxels.npy",
+        "bildstein_station3_xyz_intensity_rgb_voxels.npy",
+        "bildstein_station5_xyz_intensity_rgb_voxels.npy",
         "domfountain_station1_xyz_intensity_rgb_voxels.npy",
         "domfountain_station2_xyz_intensity_rgb_voxels.npy",
         "domfountain_station3_xyz_intensity_rgb_voxels.npy",
         "neugasse_station1_xyz_intensity_rgb_voxels.npy",
-        # "untermaederbrunnen_station1_xyz_intensity_rgb_voxels.npy",
-        # "untermaederbrunnen_station3_xyz_intensity_rgb_voxels.npy",
-        # "sg27_station1_intensity_rgb_voxels.npy",
+        "untermaederbrunnen_station1_xyz_intensity_rgb_voxels.npy",
+        "untermaederbrunnen_station3_xyz_intensity_rgb_voxels.npy",
+        "sg27_station1_intensity_rgb_voxels.npy",
         "sg27_station2_intensity_rgb_voxels.npy",
-        # "sg27_station5_intensity_rgb_voxels.npy",  
-        # "sg27_station4_intensity_rgb_voxels.npy",
+        "sg27_station5_intensity_rgb_voxels.npy",  
+        "sg27_station4_intensity_rgb_voxels.npy",
         "sg27_station9_intensity_rgb_voxels.npy",
-        # "sg28_station4_intensity_rgb_voxels.npy",
-        
+        "sg28_station4_intensity_rgb_voxels.npy",
     ]
     
 
@@ -336,9 +336,24 @@ def main():
         "mls2016_8class_20cm_ascii_area3_voxels.npy",
     ]
     filelist_test=[
-        "mls2016_8class_20cm_ascii_area1_voxels.npy",
-        "mls2016_8class_20cm_ascii_area2_voxels.npy",
-        "mls2016_8class_20cm_ascii_area3_voxels.npy",
+        # "mls2016_8class_20cm_ascii_area1_voxels.npy",
+        # "mls2016_8class_20cm_ascii_area2_voxels.npy",
+        # "mls2016_8class_20cm_ascii_area3_voxels.npy",
+        "bildstein_station1_xyz_intensity_rgb_voxels.npy",
+        "bildstein_station3_xyz_intensity_rgb_voxels.npy",
+        "bildstein_station5_xyz_intensity_rgb_voxels.npy",
+        "domfountain_station1_xyz_intensity_rgb_voxels.npy",
+        "domfountain_station2_xyz_intensity_rgb_voxels.npy",
+        "domfountain_station3_xyz_intensity_rgb_voxels.npy",
+        "neugasse_station1_xyz_intensity_rgb_voxels.npy",
+        "untermaederbrunnen_station1_xyz_intensity_rgb_voxels.npy",
+        "untermaederbrunnen_station3_xyz_intensity_rgb_voxels.npy",
+        "sg27_station1_intensity_rgb_voxels.npy",
+        "sg27_station2_intensity_rgb_voxels.npy",
+        "sg27_station5_intensity_rgb_voxels.npy",  
+        "sg27_station4_intensity_rgb_voxels.npy",
+        "sg27_station9_intensity_rgb_voxels.npy",
+        "sg28_station4_intensity_rgb_voxels.npy",
     ]
     print(filelist_train,filelist_train_trans)
     print(filelist_val)
@@ -346,6 +361,7 @@ def main():
     N_CLASSES= 8
 
     saved_args = locals()
+    print(saved_args)
     # create model
     print("Creating the network...", end="", flush=True)
     if args.nocolor:
@@ -524,7 +540,7 @@ def main():
                 loss_adv = discrepancy(outputs_1, outputs_2)
                 adv_loss = F.l1_loss(outputs_trans_1, outputs_trans_2)
 
-                loss_trans = seg_loss_trans_1+seg_loss_trans_2-adv_loss-loss_adv
+                loss_trans = seg_loss_trans_1+seg_loss_trans_2-loss_adv-adv_loss # 
 
                 loss_trans.backward()
 
@@ -548,7 +564,7 @@ def main():
                 seg_loss_trans_2 = F.cross_entropy(outputs_trans_2.view(-1, N_CLASSES), seg_trans.view(-1))
                 adv_loss = F.l1_loss(outputs_trans_1, outputs_trans_2)
 
-                loss = seg_loss_trans_1 + seg_loss_trans_2 + args.beta*(adv_loss+loss_adv) 
+                loss = seg_loss_trans_1 + seg_loss_trans_2 + args.beta*(adv_loss+loss_adv)  #
                 loss.backward()
                 optimizer_FGNet.step()
 
@@ -644,7 +660,9 @@ def main():
         # semGen.eval()
         # logs.write("test")
         # logs.flush()
-
+        start = time.time()
+        print("start time")
+        print(start)
         FGNet.eval()
         dis.eval()
 
@@ -702,7 +720,8 @@ def main():
                 save_fname = os.path.join(args.savedir, "results", f"{filename}_pts.txt")
                 xyzrgb = np.concatenate([xyzrgb, np.expand_dims(scores,1)], axis=1)
                 np.savetxt(save_fname,xyzrgb,fmt=['%.4f','%.4f','%.4f','%d'])
-
+            end = time.time()
+            print(end - start)
             # break
 
 if __name__ == '__main__':

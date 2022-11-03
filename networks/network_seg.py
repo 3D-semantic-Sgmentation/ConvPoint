@@ -633,7 +633,7 @@ class SegBig_FG(nn.Module):
         # xout = self.fcout(xout)
         # xout = xout.view(x.size(0), -1, xout.size(1))
 
-        return x0d # , x6
+        return x0d , x6
 
 
 

@@ -66,7 +66,8 @@ def draw_features(features, labels, title = "0"):
 
 def showSample(folder, filelist, bs, npoints=8192):
 
-    index = random.randint(0, len(filelist)-1)
+    # index = random.randint(0, len(filelist)-1)
+    index = 1
     pts = np.load(os.path.join(folder, filelist[index]))
     print(pts.shape)
     # get the labels
@@ -78,7 +79,8 @@ def showSample(folder, filelist, bs, npoints=8192):
 
     # pick a random point
 
-    pt_id = random.randint(0, pts.shape[0]-1)
+    # pt_id = random.randint(0, pts.shape[0]-1)
+    pt_id = int(pts.shape[0]/7*2)
     pt = pts[pt_id]
 
     # create the mask
@@ -91,20 +93,20 @@ def showSample(folder, filelist, bs, npoints=8192):
     # random selection
     choice = np.random.choice(pts.shape[0], npoints, replace=True)
     pts = pts[choice]
-    lbs = lbs[choice]
+    lbs = lbs[choice]-1
 
     pts = torch.from_numpy(pts).float()
     lbs = torch.from_numpy(lbs).long()
 
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(pts)
-    max_label = 8
+    max_label = 10
     colors = plt.get_cmap("tab20")(lbs / (max_label if max_label > 0 else 1))
     pcd.colors = o3d.utility.Vector3dVector(colors[:, :3])
     o3d.visualization.draw_geometries([pcd])
 
 original_path = "/media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/train/pointcloud"
-original_files = ["mls2016_8class_20cm_ascii_area1_voxels.npy","mls2016_8class_20cm_ascii_area1_2_voxels.npy","mls2016_8class_20cm_ascii_area2_voxels.npy","mls2016_8class_20cm_ascii_area3_voxels.npy"]
+original_files = ["mls2016_8class_20cm_ascii_area1_voxels.npy", "mls2016_8class_20cm_ascii_area2_voxels.npy","mls2016_8class_20cm_ascii_area3_voxels.npy"] 
 #train_files = ["bildstein_station1_xyz_intensity_rgb_voxels.npy","bildstein_station3_xyz_intensity_rgb_voxels.npy","bildstein_station5_xyz_intensity_rgb_voxels.npy","domfountain_station1_xyz_intensity_rgb_voxels.npy","domfountain_station2_xyz_intensity_rgb_voxels.npy","domfountain_station3_xyz_intensity_rgb_voxels.npy","neugasse_station1_xyz_intensity_rgb_voxels.npy","sg27_station1_intensity_rgb_voxels.npy","sg27_station2_intensity_rgb_voxels.npy","sg27_station4_intensity_rgb_voxels.npy",
 #"sg27_station5_intensity_rgb_voxels.npy","sg27_station9_intensity_rgb_voxels.npy","sg28_station4_intensity_rgb_voxels.npy","untermaederbrunnen_station1_xyz_intensity_rgb_voxels.npy","untermaederbrunnen_station3_xyz_intensity_rgb_voxels.npy"]
 showSample(original_path, original_files, 32, 8192)

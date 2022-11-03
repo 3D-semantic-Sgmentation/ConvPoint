@@ -255,14 +255,20 @@ def main():
 
     filelist_train=[
         # "bildstein_station1_xyz_intensity_rgb_voxels.npy",
-        # "bildstein_station3_xyz_intensity_rgb_voxels.npy",
-        # "domfountain_station1_xyz_intensity_rgb_voxels.npy",
-        # "domfountain_station3_xyz_intensity_rgb_voxels.npy",
-        # "neugasse_station1_xyz_intensity_rgb_voxels.npy",
-        # "sg27_station1_intensity_rgb_voxels.npy",
-        # "sg27_station5_intensity_rgb_voxels.npy",
+        #"bildstein_station3_xyz_intensity_rgb_voxels.npy",
+        # "bildstein_station5_xyz_intensity_rgb_voxels.npy",
+        "domfountain_station1_xyz_intensity_rgb_voxels.npy",
+        "domfountain_station2_xyz_intensity_rgb_voxels.npy",
+        "domfountain_station3_xyz_intensity_rgb_voxels.npy",
+        "neugasse_station1_xyz_intensity_rgb_voxels.npy",
         # "untermaederbrunnen_station1_xyz_intensity_rgb_voxels.npy",
-        'mls2016_8class_20cm_ascii_area1_1_1_voxels.npy',
+        # "untermaederbrunnen_station3_xyz_intensity_rgb_voxels.npy",
+        # "sg27_station1_intensity_rgb_voxels.npy",
+        "sg27_station2_intensity_rgb_voxels.npy",
+        # "sg27_station5_intensity_rgb_voxels.npy",  
+        # "sg27_station4_intensity_rgb_voxels.npy",
+        "sg27_station9_intensity_rgb_voxels.npy",
+        # "sg28_station4_intensity_rgb_voxels.npy",
     ]
 
     filelist_val=[
@@ -273,8 +279,8 @@ def main():
         # "sg27_station9_intensity_rgb_voxels.npy",
         # "sg28_station4_intensity_rgb_voxels.npy",
         # "untermaederbrunnen_station3_xyz_intensity_rgb_voxels.npy",
-        'mls2016_8class_20cm_ascii_area1_1_2_voxels.npy',
-        'mls2016_8class_20cm_ascii_area1_2_voxels.npy',
+        # 'mls2016_8class_20cm_ascii_area1_1_2_voxels.npy',
+        'mls2016_8class_20cm_ascii_area1_voxels.npy',
         "mls2016_8class_20cm_ascii_area2_voxels.npy",
         'mls2016_8class_20cm_ascii_area3_voxels.npy',
     ]
@@ -283,8 +289,7 @@ def main():
         # "area2_voxels.npy",
         # "area3_voxels.npy",
         
-        'mls2016_8class_20cm_ascii_area1_1_2_voxels.npy',
-        'mls2016_8class_20cm_ascii_area1_2_voxels.npy',
+        'mls2016_8class_20cm_ascii_area1_voxels.npy',
         "mls2016_8class_20cm_ascii_area2_voxels.npy",
         'mls2016_8class_20cm_ascii_area3_voxels.npy',
 
