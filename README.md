@@ -1,5 +1,9 @@
 # Semantic Segmentation with Transfer Learning for MLS Point Clouds
 
+## Introduction
+
+This repository propose python scripts for Semantic Segmentation with Transfer Learning for MLS Point Clouds. The library is based on the project [ConvPoint](https://github.com/aboulch/ConvPoint)
+
 ## Data
 
 Semantic data can be downloaded at [http://semantic3d.net](http://semantic3d.net).
