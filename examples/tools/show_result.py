@@ -19,7 +19,7 @@ from scipy.spatial import distance
 from scipy.stats import norm, kurtosis
 import numpy as np
 import scipy.stats
-
+import matplotlib
 from matplotlib import lines
 from matplotlib import patches
 from matplotlib.patheffects import withStroke
@@ -133,7 +133,8 @@ def show_image():
 
     # plt.show()
 
-def draw_figure(values, counts, area):
+def draw_histogram_figure(values, counts, area):
+    
     max_label = 10
 
     count_max = max(counts)
@@ -166,7 +167,7 @@ def draw_figure(values, counts, area):
         ) 
 
     ax.xaxis.set_ticks([i for i in range(0, count_max,count_max//10)])
-    ax.xaxis.set_ticklabels([i for i in range(0, count_max, count_max//10)], size=16, fontfamily="Econ Sans Cnd", fontweight=100)
+    ax.xaxis.set_ticklabels([i for i in range(0, count_max, count_max//10)], size=16, fontfamily="Times New Roman", fontweight=100)
     ax.xaxis.set_tick_params(labelbottom=False, labeltop=True, length=0)
 
     ax.set_xlim((0, count_max))
@@ -462,6 +463,7 @@ import os
 from scipy.spatial.distance import pdist
 import seaborn as sns
 import seaborn as sns
+from matplotlib import rcParams
 
 # calculateMahalanobis Function to calculate
 # the Mahalanobis distance
@@ -478,7 +480,11 @@ def calculateMahalanobis(y=None, data=None, cov=None):
 def distance():
 
 
-    folder = "/media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/train/pointcloud"
+
+    stat = "percent"  # frequency|probability|percent|density
+    folder = "/media/liangdao/DATA/MyConv/data/train/pointcloud"
+    titlesize= 15
+    ticketsize = 13
     filelist = [
         "bildstein_station1_xyz_intensity_rgb_voxels.npy",
         "bildstein_station3_xyz_intensity_rgb_voxels.npy",
@@ -498,29 +504,28 @@ def distance():
 
     ]
     
-    original_path =  "/media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/train/pointcloud"  # "/media/liangdao/DATA/Paris_and_Lille/train/pointcloud/"
-    #["Lille1_1_voxels.npy","Lille1_2_voxels.npy","Lille2_voxels.npy","Paris_voxels.npy"]
+    original_path = "/media/liangdao/DATA/origin_data/origin/train/pointcloud"
+    # original_path =  "/media/liangdao/DATA/segmentation/ConvPoint/data/Prepare/train/pointcloud"  # "/media/liangdao/DATA/Paris_and_Lille/train/pointcloud/"
+
     target_filelist= [
-        "mls2016_8class_20cm_ascii_area1_voxels.npy",
-        "mls2016_8class_20cm_ascii_area2_voxels.npy",
-        "mls2016_8class_20cm_ascii_area3_voxels.npy",
-        # "L001_voxels.npy",
-        # "L002_voxels.npy",
-        # "L003_1_voxels.npy",
-        # "L003_2_voxels.npy",
-        # "L004_voxels.npy"
+        # "mls2016_8class_20cm_ascii_area1_voxels.npy",
+        # "mls2016_8class_20cm_ascii_area2_voxels.npy",
+        # "mls2016_8class_20cm_ascii_area3_voxels.npy",
+        "area1_voxels.npy",
+        "area2_voxels.npy",
+        "area3_voxels.npy",
     ]  
-    
 
     def normalization(data):
         _range = np.max(data) - np.min(data)
         return (data - np.min(data)) / _range   
     # get the features
-    his_source = []
+    #his_source = []
 
     sns.set_style('whitegrid')
+ 
     fig, axs = plt.subplots(5,3)
-    plt.ticklabel_format(style='plain', axis='y',useOffset=False)
+
     for i in range(0,len(filelist)):
         print(i//3, i%3)
         pts = np.load(os.path.join(folder, filelist[i]))
@@ -528,49 +533,74 @@ def distance():
         print(pts.shape)
         # his = axs[i//5, i%5].hist(pts)
         # his_source.append(normalization(his[0]))
-        his = sns.histplot(ax=axs[i//3, i%3], data=pts, element="poly", fill=False, common_norm=True,bins=10, kde=True)
+        his = sns.histplot(ax=axs[i//3, i%3], data=pts, element="poly", fill=False, common_norm=True,bins=10, stat=stat, kde=False)
         his.set(xlabel=None)
         his.set(ylabel=None)
-        his = sns.histplot(ax=axs[i//3, i%3], data=pts, common_norm=True,bins=10, kde=True)
+        his = sns.histplot(ax=axs[i//3, i%3], data=pts, common_norm=True,bins=10,stat=stat, kde=False)
         his.set(xlabel=None)
         his.set(ylabel=None)
         
-        #his_source.append(normalization(his[0]))
+        # his_source.append(normalization(his[0]))
         axs[i//3, i%3].set_title(filelist[i].replace("_intensity_rgb_voxels.npy",""))
-        axs[i//3, i%3].set_xticks([])
-    
+        #axs[i//3, i%3].set_xticks([])
+        axs[i//3, i%3].tick_params(axis='x', labelsize=ticketsize)
+        axs[i//3, i%3].tick_params(axis='y', labelsize=ticketsize)
 
-    fig.text(0.5, 0.04, 'Height', ha='center',fontsize=15)
-    fig.text(0.04, 0.5, 'Count', va='center', rotation='vertical',fontsize=15)
+    fig.text(0.5, 0.04, 'Height(m)', ha='center',fontsize=titlesize)
+    fig.text(0.04, 0.5, 'Percent(%)', va='center', rotation='vertical', fontsize=titlesize)
+    plt.ticklabel_format(style='plain', axis='y',useOffset=True)
+    
+    matplotlib.rc('axes', titlesize=titlesize)
+    # plt.rcParams["font.family"] = "serif"
+    # plt.rcParams["font.serif"] = "Times New Roman"
+    # plt.rc('font', size=titlesize) 
+    config = {
+        "font.size": 15,
+        "mathtext.fontset":'stix',
+        }
+    rcParams.update(config)
     plt.show()
 
-    fig, axs = plt.subplots(len(target_filelist))
-    plt.ticklabel_format(style='plain', axis='y',useOffset=False)
-    his_target = []
-    for i in range(0,len(target_filelist)):
-        plt.xticks([])
-        q = np.load(os.path.join(original_path, target_filelist[i]))
+    fig, axs = plt.subplots(1)
+    plt.ticklabel_format(style='plain', axis='y',useOffset=True)
+    # his_target = []
+    tum_height = []
+    # len(target_filelist)
+    for i in range(0,1):
+        q=np.load(os.path.join(original_path, target_filelist[i]))
         q = q[:,2]
-        print(q.shape)
-
+        tum_height.extend(q)
+        print(len(tum_height))
         # his = axs[i].hist(q)
         # his_target.append(normalization(his[0]))
-        his = sns.histplot(ax=axs[i], data=q, kde=True,bins=10, common_norm=True,element="poly", fill=False)
-        his.set(xlabel=None)
-        his.set(ylabel=None)
-        his = sns.histplot(ax=axs[i], data=q, common_norm=True, kde=True,bins=10)
-        his.set(xlabel=None)
-        his.set(ylabel=None)
-        #his_target.append(normalization(his[0]))
-        axs[i].set_title(target_filelist[i].replace("_voxels.npy","").replace("2016_8class_20cm_ascii",""))
-        axs[i].set_xticks([])
+        # plt.xticks([])
+
+    print("1")
+    his = sns.histplot(ax=axs, data=tum_height, kde=False, bins=10, common_norm=True, element="poly", stat=stat,fill=False)
+    his = sns.histplot(ax=axs, data=tum_height, common_norm=True, stat=stat,bins=10) # kde=True,
+    his.set(xlabel=None)
+    his.set(ylabel=None)
+    # for tick in axs.get_xticklabels():
+    #     tick.set_fontname("Times New Roman")
+    # for tick in axs.get_yticklabels():
+    #     tick.set_fontname("Times New Roman")
+    # his_target.append(normalization(his[0]))
+
+    # axs[0].set_title(target_filelist[i].replace("_voxels.npy","").replace("2016_8class_20cm_ascii",""))
     
-    fig.text(0.5, 0.04, 'Height', ha='center',fontsize=15)
-    fig.text(0.04, 0.5, 'Count', va='center', rotation='vertical',fontsize=15)
-    
+    axs.set_title("TUM-MLS",fontsize=15)
+    # axs[0].set_xticks([])
+
+    fig.text(0.5, 0.04, 'Height(m)', ha='center',fontsize=titlesize) #, fontfamily="Times New Roman"
+    fig.text(0.04, 0.5, 'Percent(%)', va='center', rotation='vertical',fontsize=titlesize)
+    axs.tick_params(axis='x', labelsize=ticketsize)
+    axs.tick_params(axis='y', labelsize=ticketsize)
+    # matplotlib.rc('axes', titlesize=15)
+    # plt.rc('font', size=15) 
     plt.show()
-    print(his_source)
-    print(his_target)
+
+
+
     result={}
     for i in range(len(his_source)):
         corr=0
@@ -596,4 +626,16 @@ def distance():
 if __name__ == '__main__': 
     # show_image()
     # dask_statistic_similarity()
-    statistic_class()
+    distance()
+
+
+
+
+
+
+
+
+
+
+
+
